@@ -1,0 +1,4 @@
+An attempt to create an archiver command that is more efficient when working
+with many small files than other archivers (eg. tar).  Go's concurrency
+constructs will be used to allow many files to be read simultaneously.
+
