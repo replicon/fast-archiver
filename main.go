@@ -10,22 +10,22 @@ import (
 )
 
 type block struct {
-	filePath      string
-	numBytes      uint16
-	buffer        []byte
-	writeComplete chan bool
+	filePath    string
+	numBytes    uint16
+	buffer      []byte
+	startOfFile bool
+	endOfFile   bool
 }
 
-var directoriesPending = 0
-var filesPending = 0
+var blockSize = 4096
 
 func main() {
 	var directoryScanQueue = make(chan string, 128)
 	var fileReadQueue = make(chan string, 128)
-	var fileWriteQueue = make(chan block, 1)
+	var fileWriteQueue = make(chan block, 128)
 	var workInProgress sync.WaitGroup
 
-	go fileWriter(fileWriteQueue)
+	go fileWriter(fileWriteQueue, &workInProgress)
 
 	for i := 0; i < 16; i++ {
 		go directoryScanner(directoryScanQueue, fileReadQueue, &workInProgress)
@@ -66,9 +66,6 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 }
 
 func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInProgress *sync.WaitGroup) {
-	buffer := make([]byte, 4096)
-	writeComplete := make(chan bool)
-
 	for filePath := range fileReadQueue {
 		file, err := os.Open(filePath)
 		if err != nil {
@@ -76,7 +73,11 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 			os.Exit(2)
 		}
 
+		workInProgress.Add(1)
+		fileWriterQueue <- block{filePath, 0, nil, true, false}
+
 		for {
+			buffer := make([]byte, blockSize)
 			bytesRead, err := file.Read(buffer)
 			if err == io.EOF {
 				break
@@ -85,24 +86,31 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 				os.Exit(2)
 			}
 
-			fileWriterQueue <- block{ filePath, uint16(bytesRead), buffer, writeComplete }
-			<-writeComplete
+			workInProgress.Add(1)
+			fileWriterQueue <- block{filePath, uint16(bytesRead), buffer, false, false}
 		}
+
+		workInProgress.Add(1)
+		fileWriterQueue <- block{filePath, 0, nil, false, true}
 
 		file.Close()
 		workInProgress.Done()
 	}
 }
 
-func fileWriter(fileWriterQueue <-chan block) {
+func fileWriter(fileWriterQueue <-chan block, workInProgress *sync.WaitGroup) {
 	output, err := os.Create("test.output")
 	if err != nil {
 		println("File output write error:", err.Error())
 		os.Exit(3)
 	}
 
-	for block := range fileWriterQueue {
+	flags := make([]byte, 1)
+	const dataBlockFlag byte = 1 << 0
+	const startOfFileFlag byte = 1 << 1
+	const endOfFileFlag byte = 1 << 2
 
+	for block := range fileWriterQueue {
 		filePath := []byte(block.filePath)
 		err = binary.Write(output, binary.BigEndian, uint32(len(filePath)))
 		if err != nil {
@@ -115,20 +123,41 @@ func fileWriter(fileWriterQueue <-chan block) {
 			os.Exit(3)
 		}
 
-		err = binary.Write(output, binary.BigEndian, uint16(block.numBytes))
-		if err != nil {
-			println("File output write error:", err.Error())
-			os.Exit(3)
+		if block.startOfFile {
+			flags[0] = startOfFileFlag
+			_, err = output.Write(flags)
+			if err != nil {
+				println("File output write error:", err.Error())
+				os.Exit(3)
+			}
+		} else if block.endOfFile {
+			flags[0] = endOfFileFlag
+			_, err = output.Write(flags)
+			if err != nil {
+				println("File output write error:", err.Error())
+				os.Exit(3)
+			}
+		} else {
+			flags[0] = dataBlockFlag
+			_, err = output.Write(flags)
+			if err != nil {
+				println("File output write error:", err.Error())
+				os.Exit(3)
+			}
+
+			err = binary.Write(output, binary.BigEndian, uint16(block.numBytes))
+			if err != nil {
+				println("File output write error:", err.Error())
+				os.Exit(3)
+			}
+
+			_, err = output.Write(block.buffer[:block.numBytes])
+			if err != nil {
+				println("File output write error:", err.Error())
+				os.Exit(3)
+			}
 		}
 
-		_, err = output.Write(block.buffer[:block.numBytes])
-		if err != nil {
-			println("File output write error:", err.Error())
-			os.Exit(3)
-		}
-
-		block.writeComplete <- true
-
+		workInProgress.Done()
 	}
 }
-
