@@ -212,7 +212,6 @@ func archiveReader(archiveFileName string) {
 		}
 
 		if flag[0] == startOfFileFlag {
-			println("SOF:", filePath, len(fileOutputChan))
 
 			c := make(chan block, 1)
 			fileOutputChan[filePath] = c
@@ -221,7 +220,6 @@ func archiveReader(archiveFileName string) {
 			c <- block{ filePath, 0, nil, true, false }
 
 		} else if flag[0] == endOfFileFlag {
-			println("EOF:", filePath)
 
 			c := fileOutputChan[filePath]
 			c <- block{ filePath, 0, nil, false, true }
@@ -229,7 +227,6 @@ func archiveReader(archiveFileName string) {
 			delete(fileOutputChan, filePath)
 
 		} else if flag[0] == dataBlockFlag {
-			//println("DAT:", filePath)
 
 			var blockSize uint16
 			err = binary.Read(file, binary.BigEndian, &blockSize)
@@ -260,11 +257,16 @@ func archiveReader(archiveFileName string) {
 
 func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 	var file *os.File = nil
-	var filePath string
 	for block := range blockSource {
 		if block.startOfFile {
-			println("CREATE", block.filePath)
-			filePath = block.filePath
+
+			dir, _ := filepath.Split(block.filePath)
+			err := os.MkdirAll(dir, os.ModeDir | 0755)
+			if err != nil {
+				println("Directory create error:", err.Error())
+				os.Exit(4)
+			}
+
 			tmp, err := os.Create(block.filePath)
 			if err != nil {
 				println("File create error:", err.Error())
@@ -272,7 +274,6 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 			}
 			file = tmp
 		} else if block.endOfFile {
-			println("CLOSE", filePath)
 			file.Close()
 			file = nil
 		} else {
