@@ -2,12 +2,11 @@ package main
 
 import (
 	"encoding/binary"
-	"fmt"
-	"time"
 	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 type block struct {
@@ -17,28 +16,34 @@ type block struct {
 	writeComplete chan bool
 }
 
+var directoriesPending = 0
+var filesPending = 0
+
 func main() {
 	var directoryScanQueue = make(chan string, 128)
 	var fileReadQueue = make(chan string, 128)
 	var fileWriteQueue = make(chan block, 1)
+	var workInProgress sync.WaitGroup
 
 	go fileWriter(fileWriteQueue)
 
-	for i := 0; i < 16; i++ {
-		go directoryScanner(directoryScanQueue, fileReadQueue)
+	for i := 0; i < 1; i++ {
+		go directoryScanner(directoryScanQueue, fileReadQueue, &workInProgress)
 	}
-	for i := 0; i < 16; i++ {
-		go fileReader(fileReadQueue, fileWriteQueue)
+	for i := 0; i < 1; i++ {
+		go fileReader(fileReadQueue, fileWriteQueue, &workInProgress)
 	}
 
+	workInProgress.Add(1)
 	directoryScanQueue <- "test"
 
-    fmt.Printf("hello, world\n")
-	time.Sleep(time.Second * 5)
-    fmt.Printf("goodbye, world\n")
+	workInProgress.Wait()
+	close(directoryScanQueue)
+	close(fileReadQueue)
+	close(fileWriteQueue)
 }
 
-func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string) {
+func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string, workInProgress *sync.WaitGroup) {
 	for directoryPath := range directoryScanQueue {
 		files, err := ioutil.ReadDir(directoryPath)
 		if err != nil {
@@ -46,6 +51,7 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string)
 			os.Exit(1)
 		}
 
+		workInProgress.Add(len(files))
 		for _, file := range files {
 			filePath := filepath.Join(directoryPath, file.Name())
 			if file.IsDir() {
@@ -54,10 +60,12 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string)
 				fileReadQueue <- filePath
 			}
 		}
+
+		workInProgress.Done()
 	}
 }
 
-func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block) {
+func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInProgress *sync.WaitGroup) {
 	buffer := make([]byte, 4096)
 	writeComplete := make(chan bool)
 
@@ -82,6 +90,7 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block) {
 		}
 
 		file.Close()
+		workInProgress.Done()
 	}
 }
 
