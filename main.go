@@ -26,19 +26,49 @@ const endOfFileFlag byte = 1 << 2
 func main() {
 	extract := flag.Bool("x", false, "extract archive")
 	create := flag.Bool("c", false, "create archive")
+	inputFileName := flag.String("i", "", "input file for extraction; defaults to stdin")
+	outputFileName := flag.String("o", "", "output file for creation; defaults to stdout")
 	flag.Parse()
 
 	if *extract {
-		archiveReader("test.output")
+		var inputFile *os.File
+		if *inputFileName != "" {
+			file, err := os.Open(*inputFileName)
+			if err != nil {
+				println("File open error:", err.Error())
+				os.Exit(2)
+			}
+			inputFile = file
+		} else {
+			inputFile = os.Stdin
+		}
+
+		archiveReader(inputFile)
 
 	} else if *create {
+		if flag.NArg() == 0 {
+			println("Please specify directories to archive")
+			os.Exit(1)
+		}
+
 		var directoryScanQueue = make(chan string, 128)
 		var fileReadQueue = make(chan string, 128)
 		var fileWriteQueue = make(chan block, 128)
 		var workInProgress sync.WaitGroup
 
-		go archiveWriter(fileWriteQueue, &workInProgress)
+		var outputFile *os.File
+		if *outputFileName != "" {
+			file, err := os.Create(*outputFileName)
+			if err != nil {
+				println("File open error:", err.Error())
+				os.Exit(2)
+			}
+			outputFile = file
+		} else {
+			outputFile = os.Stdout
+		}
 
+		go archiveWriter(outputFile, fileWriteQueue, &workInProgress)
 		for i := 0; i < 16; i++ {
 			go directoryScanner(directoryScanQueue, fileReadQueue, &workInProgress)
 		}
@@ -46,8 +76,10 @@ func main() {
 			go fileReader(fileReadQueue, fileWriteQueue, &workInProgress)
 		}
 
-		workInProgress.Add(1)
-		directoryScanQueue <- "test"
+		for i := 0; i < flag.NArg(); i++ {
+			workInProgress.Add(1)
+			directoryScanQueue <- flag.Arg(i)
+		}
 
 		workInProgress.Wait()
 		close(directoryScanQueue)
@@ -114,18 +146,12 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 	}
 }
 
-func archiveWriter(fileWriterQueue <-chan block, workInProgress *sync.WaitGroup) {
-	output, err := os.Create("test.output")
-	if err != nil {
-		println("File output write error:", err.Error())
-		os.Exit(3)
-	}
-
+func archiveWriter(output *os.File, fileWriterQueue <-chan block, workInProgress *sync.WaitGroup) {
 	flags := make([]byte, 1)
 
 	for block := range fileWriterQueue {
 		filePath := []byte(block.filePath)
-		err = binary.Write(output, binary.BigEndian, uint16(len(filePath)))
+		err := binary.Write(output, binary.BigEndian, uint16(len(filePath)))
 		if err != nil {
 			println("File output write error:", err.Error())
 			os.Exit(3)
@@ -175,20 +201,13 @@ func archiveWriter(fileWriterQueue <-chan block, workInProgress *sync.WaitGroup)
 	}
 }
 
-func archiveReader(archiveFileName string) {
+func archiveReader(file *os.File) {
 	var workInProgress sync.WaitGroup
-
-	file, err := os.Open(archiveFileName)
-	if err != nil {
-		println("File open error:", err.Error())
-		os.Exit(2)
-	}
-
 	fileOutputChan := make(map[string]chan block)
 
 	for {
 		var pathSize uint16
-		err = binary.Read(file, binary.BigEndian, &pathSize)
+		err := binary.Read(file, binary.BigEndian, &pathSize)
 		if err == io.EOF {
 			break
 		} else if err != nil {
