@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"math"
 )
 
 type block struct {
@@ -18,7 +19,7 @@ type block struct {
 	endOfFile   bool
 }
 
-var blockSize = 4096
+var blockSize uint16
 const dataBlockFlag byte = 1 << 0
 const startOfFileFlag byte = 1 << 1
 const endOfFileFlag byte = 1 << 2
@@ -28,7 +29,14 @@ func main() {
 	create := flag.Bool("c", false, "create archive")
 	inputFileName := flag.String("i", "", "input file for extraction; defaults to stdin")
 	outputFileName := flag.String("o", "", "output file for creation; defaults to stdout")
+	requestedBlockSize := flag.Uint("block-size", 4096, "internal block-size, effective only during create archive")
 	flag.Parse()
+
+	if *requestedBlockSize > math.MaxUint16 {
+		println("block-size must be less than or equal to", math.MaxUint16)
+		os.Exit(1)
+	}
+	blockSize = uint16(*requestedBlockSize)
 
 	if *extract {
 		var inputFile *os.File
