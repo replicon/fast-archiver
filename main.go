@@ -27,10 +27,10 @@ func main() {
 
 	go fileWriter(fileWriteQueue)
 
-	for i := 0; i < 1; i++ {
+	for i := 0; i < 16; i++ {
 		go directoryScanner(directoryScanQueue, fileReadQueue, &workInProgress)
 	}
-	for i := 0; i < 1; i++ {
+	for i := 0; i < 16; i++ {
 		go fileReader(fileReadQueue, fileWriteQueue, &workInProgress)
 	}
 
