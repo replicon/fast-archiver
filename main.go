@@ -40,6 +40,7 @@ var logger *log.Logger
 const dataBlockFlag byte = 1 << 0
 const startOfFileFlag byte = 1 << 1
 const endOfFileFlag byte = 1 << 2
+const directoryFlag byte = 1 << 3
 
 func main() {
 	extract := flag.Bool("x", false, "extract archive")
@@ -107,7 +108,7 @@ func main() {
 		bufferedOutputFile := bufio.NewWriter(outputFile)
 		go archiveWriter(bufferedOutputFile, fileWriteQueue, &workInProgress)
 		for i := 0; i < *dirReaderCount; i++ {
-			go directoryScanner(directoryScanQueue, fileReadQueue, excludes, &workInProgress)
+			go directoryScanner(directoryScanQueue, fileReadQueue, fileWriteQueue, excludes, &workInProgress)
 		}
 		for i := 0; i < *fileReaderCount; i++ {
 			go fileReader(fileReadQueue, fileWriteQueue, &workInProgress)
@@ -129,57 +130,82 @@ func main() {
 	}
 }
 
-func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string, excludePatterns []string, workInProgress *sync.WaitGroup) {
+func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string, fileWriterQueue chan block, excludePatterns []string, workInProgress *sync.WaitGroup) {
 	for directoryPath := range directoryScanQueue {
 		if verbose {
 			logger.Println(directoryPath)
 		}
 
 		directory, err := os.Open(directoryPath)
-		if err == nil {
-			for fileName := range readdirnames(int(directory.Fd())) {
-				workInProgress.Add(1)
-				filePath := filepath.Join(directoryPath, fileName)
-
-				excludeFile := false
-				for _, excludePattern := range excludePatterns {
-					match, err := filepath.Match(excludePattern, filePath)
-					if err == nil && match {
-						excludeFile = true
-						break
-					}
-				}
-				if excludeFile {
-					logger.Println("skipping excluded file", filePath)
-					workInProgress.Done()
-					continue
-				}
-
-				fileInfo, err := os.Lstat(filePath)
-				if err != nil {
-					logger.Println("unable to lstat file", err.Error())
-					workInProgress.Done()
-					continue
-				} else if (fileInfo.Mode() & os.ModeSymlink) != 0 {
-					logger.Println("skipping symbolic link", filePath)
-					workInProgress.Done()
-					continue
-				}
-
-				if fileInfo.IsDir() {
-					directoryScanQueue <- filePath
-				} else {
-					fileReadQueue <- filePath
-				}
-			}
-
-			directory.Close()
-		} else {
+		if err != nil {
 			logger.Println("directory read error:", err.Error())
+			workInProgress.Done()
+			continue
 		}
 
+		uid, gid, mode := getModeOwnership(directory)
+		workInProgress.Add(1)
+		fileWriterQueue <- block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
+
+		for fileName := range readdirnames(int(directory.Fd())) {
+			workInProgress.Add(1)
+			filePath := filepath.Join(directoryPath, fileName)
+
+			excludeFile := false
+			for _, excludePattern := range excludePatterns {
+				match, err := filepath.Match(excludePattern, filePath)
+				if err == nil && match {
+					excludeFile = true
+					break
+				}
+			}
+			if excludeFile {
+				logger.Println("skipping excluded file", filePath)
+				workInProgress.Done()
+				continue
+			}
+
+			fileInfo, err := os.Lstat(filePath)
+			if err != nil {
+				logger.Println("unable to lstat file", err.Error())
+				workInProgress.Done()
+				continue
+			} else if (fileInfo.Mode() & os.ModeSymlink) != 0 {
+				logger.Println("skipping symbolic link", filePath)
+				workInProgress.Done()
+				continue
+			}
+
+			if fileInfo.IsDir() {
+				directoryScanQueue <- filePath
+			} else {
+				fileReadQueue <- filePath
+			}
+		}
+
+		directory.Close()
 		workInProgress.Done()
 	}
+}
+
+func getModeOwnership(file *os.File) (int, int, os.FileMode) {
+	var uid int = 0
+	var gid int = 0
+	var mode os.FileMode = 0
+	fi, err := file.Stat()
+	if err != nil {
+		logger.Println("file stat error; uid/gid/mode will be incorrect:", err.Error())
+	} else {
+		mode = fi.Mode()
+		stat_t := fi.Sys().(*syscall.Stat_t)
+		if stat_t != nil {
+			uid = int(stat_t.Uid)
+			gid = int(stat_t.Gid)
+		} else {
+			logger.Println("unable to find file uid/gid")
+		}
+	}
+	return uid, gid, mode
 }
 
 func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInProgress *sync.WaitGroup) {
@@ -191,22 +217,7 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 		file, err := os.Open(filePath)
 		if err == nil {
 
-			var uid int = 0
-			var gid int = 0
-			var mode os.FileMode = 0
-			fi, err := file.Stat()
-			if err != nil {
-				logger.Println("file stat error; uid/gid/mode will be incorrect:", err.Error())
-			} else {
-				mode = fi.Mode()
-				stat_t := fi.Sys().(*syscall.Stat_t)
-				if stat_t != nil {
-					uid = int(stat_t.Uid)
-					gid = int(stat_t.Gid)
-				} else {
-					logger.Println("unable to find file uid/gid")
-				}
-			}
+			uid, gid, mode := getModeOwnership(file)
 
 			workInProgress.Add(1)
 			fileWriterQueue <- block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
@@ -293,6 +304,24 @@ func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgres
 			if err != nil {
 				logger.Fatalln("Archive write error:", err.Error())
 			}
+		} else if block.blockType == blockTypeDirectory {
+			flags[0] = directoryFlag
+			_, err = output.Write(flags)
+			if err != nil {
+				logger.Fatalln("Archive write error:", err.Error())
+			}
+			err = binary.Write(output, binary.BigEndian, uint32(block.uid))
+			if err != nil {
+				logger.Fatalln("Archive write error:", err.Error())
+			}
+			err = binary.Write(output, binary.BigEndian, uint32(block.gid))
+			if err != nil {
+				logger.Fatalln("Archive write error:", err.Error())
+			}
+			err = binary.Write(output, binary.BigEndian, block.mode)
+			if err != nil {
+				logger.Fatalln("Archive write error:", err.Error())
+			}
 		} else {
 			logger.Fatalln("Unexpected block type")
 		}
@@ -372,6 +401,34 @@ func archiveReader(file io.Reader) {
 
 			c := fileOutputChan[filePath]
 			c <- block{filePath, blockSize, blockData, blockTypeData, 0, 0, 0}
+		} else if flag[0] == directoryFlag {
+			var uid uint32
+			var gid uint32
+			var mode os.FileMode
+
+			err = binary.Read(file, binary.BigEndian, &uid)
+			if err != nil {
+				logger.Fatalln("Archive read error:", err.Error())
+			}
+			err = binary.Read(file, binary.BigEndian, &gid)
+			if err != nil {
+				logger.Fatalln("Archive read error:", err.Error())
+			}
+			err = binary.Read(file, binary.BigEndian, &mode)
+			if err != nil {
+				logger.Fatalln("Archive read error:", err.Error())
+			}
+
+			err = os.Mkdir(filePath, mode)
+			if err != nil && !os.IsExist(err) {
+				logger.Fatalln("Directory create error:", err.Error())
+			}
+			err = os.Chown(filePath, int(uid), int(gid))
+			if err != nil {
+				logger.Println("Directory chown error:", err.Error())
+			}
+
+
 		} else {
 			logger.Fatalln("Archive error: unrecognized block flag", flag[0])
 		}
@@ -387,12 +444,6 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 		if block.blockType == blockTypeStartOfFile {
 			if verbose {
 				logger.Println(block.filePath)
-			}
-
-			dir, _ := filepath.Split(block.filePath)
-			err := os.MkdirAll(dir, os.ModeDir|0755)
-			if err != nil {
-				logger.Fatalln("Directory create error:", err.Error())
 			}
 
 			tmp, err := os.Create(block.filePath)
