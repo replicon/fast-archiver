@@ -5,10 +5,10 @@ import (
 	"flag"
 	"io"
 	"io/ioutil"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
-	"math"
 )
 
 type block struct {
@@ -20,6 +20,7 @@ type block struct {
 }
 
 var blockSize uint16
+
 const dataBlockFlag byte = 1 << 0
 const startOfFileFlag byte = 1 << 1
 const endOfFileFlag byte = 1 << 2
@@ -248,12 +249,12 @@ func archiveReader(file *os.File) {
 			fileOutputChan[filePath] = c
 			workInProgress.Add(1)
 			go writeFile(c, &workInProgress)
-			c <- block{ filePath, 0, nil, true, false }
+			c <- block{filePath, 0, nil, true, false}
 
 		} else if flag[0] == endOfFileFlag {
 
 			c := fileOutputChan[filePath]
-			c <- block{ filePath, 0, nil, false, true }
+			c <- block{filePath, 0, nil, false, true}
 			close(c)
 			delete(fileOutputChan, filePath)
 
@@ -274,7 +275,7 @@ func archiveReader(file *os.File) {
 			}
 
 			c := fileOutputChan[filePath]
-			c <- block{ filePath, blockSize, blockData, false, false }
+			c <- block{filePath, blockSize, blockData, false, false}
 
 		} else {
 			println("unrecognized block flag")
@@ -292,7 +293,7 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 		if block.startOfFile {
 
 			dir, _ := filepath.Split(block.filePath)
-			err := os.MkdirAll(dir, os.ModeDir | 0755)
+			err := os.MkdirAll(dir, os.ModeDir|0755)
 			if err != nil {
 				println("Directory create error:", err.Error())
 				os.Exit(4)
@@ -317,4 +318,3 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 	}
 	workInProgress.Done()
 }
-
