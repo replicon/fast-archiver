@@ -11,8 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"sync"
+	"syscall"
 )
 
 type block struct {
@@ -46,7 +46,7 @@ func main() {
 	fileReadQueueSize := flag.Int("queue-read", 128, "queue size for reading files (-c only)")
 	fileWriteQueueSize := flag.Int("queue-write", 128, "queue size for archive write (-c only); increasing can cause increased memory usage")
 	multiCpu := flag.Int("multicpu", 1, "maximum number of CPUs that can be executing simultaneously")
-
+	exclude := flag.String("exclude", "", "file patterns to exclude (eg. core.*); can be path list separated (eg. : in Linux) for multiple excludes (-c only)")
 	flag.BoolVar(&verbose, "v", false, "verbose output on stderr")
 	flag.Parse()
 
@@ -84,6 +84,7 @@ func main() {
 		var fileReadQueue = make(chan string, *fileReadQueueSize)
 		var fileWriteQueue = make(chan block, *fileWriteQueueSize)
 		var workInProgress sync.WaitGroup
+		var excludes = filepath.SplitList(*exclude)
 
 		var outputFile *os.File
 		if *outputFileName != "" {
@@ -99,7 +100,7 @@ func main() {
 		bufferedOutputFile := bufio.NewWriter(outputFile)
 		go archiveWriter(bufferedOutputFile, fileWriteQueue, &workInProgress)
 		for i := 0; i < *dirReaderCount; i++ {
-			go directoryScanner(directoryScanQueue, fileReadQueue, &workInProgress)
+			go directoryScanner(directoryScanQueue, fileReadQueue, excludes, &workInProgress)
 		}
 		for i := 0; i < *fileReaderCount; i++ {
 			go fileReader(fileReadQueue, fileWriteQueue, &workInProgress)
@@ -121,7 +122,7 @@ func main() {
 	}
 }
 
-func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string, workInProgress *sync.WaitGroup) {
+func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string, excludePatterns []string, workInProgress *sync.WaitGroup) {
 	for directoryPath := range directoryScanQueue {
 		if verbose {
 			logger.Println(directoryPath)
@@ -131,12 +132,24 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 		if err == nil {
 			workInProgress.Add(len(files))
 			for _, file := range files {
-				if (file.Mode() & os.ModeSymlink) != 0 {
-					logger.Println("skipping symbolic link", file.Name())
+				filePath := filepath.Join(directoryPath, file.Name())
+				excludeFile := false
+				for _, excludePattern := range excludePatterns {
+					match, err := filepath.Match(excludePattern, filePath)
+					if err == nil && match {
+						excludeFile = true
+						break
+					}
+				}
+				if excludeFile {
+					logger.Println("skipping excluded file", filePath)
+					workInProgress.Done()
+					continue
+				} else if (file.Mode() & os.ModeSymlink) != 0 {
+					logger.Println("skipping symbolic link", filePath)
 					workInProgress.Done()
 					continue
 				}
-				filePath := filepath.Join(directoryPath, file.Name())
 				if file.IsDir() {
 					directoryScanQueue <- filePath
 				} else {
