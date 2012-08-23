@@ -414,7 +414,6 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 	workInProgress.Done()
 }
 
-
 // Copy of os.Readdirnames for UNIX systems, but modified to return results
 // as found through a channel rather than in one large array.
 func readdirnames(fd int) chan string {
@@ -455,7 +454,3 @@ func readdirnames(fd int) chan string {
 	}(fd)
 	return retval
 }
-
-
-
-
