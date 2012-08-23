@@ -154,7 +154,6 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 
 		file, err := os.Open(filePath)
 		if err == nil {
-			workInProgress.Add(1)
 
 			var uid int = 0
 			var gid int = 0
@@ -172,6 +171,7 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 				mode = fi.Mode()
 			}
 
+			workInProgress.Add(1)
 			fileWriterQueue <- block{filePath, 0, nil, true, false, uid, gid, mode}
 
 			bufferedFile := bufio.NewReader(file)
