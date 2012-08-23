@@ -36,6 +36,8 @@ type block struct {
 var blockSize uint16
 var verbose bool
 var logger *log.Logger
+var ignorePerms bool
+var ignoreOwners bool
 
 const dataBlockFlag byte = 1 << 0
 const startOfFileFlag byte = 1 << 1
@@ -56,6 +58,8 @@ func main() {
 	multiCpu := flag.Int("multicpu", 1, "maximum number of CPUs that can be executing simultaneously")
 	exclude := flag.String("exclude", "", "file patterns to exclude (eg. core.*); can be path list separated (eg. : in Linux) for multiple excludes (-c only)")
 	flag.BoolVar(&verbose, "v", false, "verbose output on stderr")
+	flag.BoolVar(&ignorePerms, "ignore-perms", false, "ignore permissions when restoring files (-x only)")
+	flag.BoolVar(&ignoreOwners, "ignore-owners", false, "ignore owners when restoring files (-x only)")
 	flag.Parse()
 
 	runtime.GOMAXPROCS(*multiCpu)
@@ -419,16 +423,19 @@ func archiveReader(file io.Reader) {
 				logger.Fatalln("Archive read error:", err.Error())
 			}
 
+			if ignorePerms {
+				mode = os.ModeDir | 0755
+			}
 			err = os.Mkdir(filePath, mode)
 			if err != nil && !os.IsExist(err) {
 				logger.Fatalln("Directory create error:", err.Error())
 			}
-			err = os.Chown(filePath, int(uid), int(gid))
-			if err != nil {
-				logger.Println("Directory chown error:", err.Error())
+			if !ignoreOwners {
+				err = os.Chown(filePath, int(uid), int(gid))
+				if err != nil {
+					logger.Println("Directory chown error:", err.Error())
+				}
 			}
-
-
 		} else {
 			logger.Fatalln("Archive error: unrecognized block flag", flag[0])
 		}
@@ -453,13 +460,17 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 			file = tmp
 			bufferedFile = bufio.NewWriter(file)
 
-			err = file.Chown(block.uid, block.gid)
-			if err != nil {
-				logger.Println("Unable to chown file to", block.uid, "/", block.gid, ":", err.Error())
+			if !ignoreOwners {
+				err = file.Chown(block.uid, block.gid)
+				if err != nil {
+					logger.Println("Unable to chown file to", block.uid, "/", block.gid, ":", err.Error())
+				}
 			}
-			err = file.Chmod(block.mode)
-			if err != nil {
-				logger.Println("Unable to chmod file to", block.mode, ":", err.Error())
+			if !ignorePerms {
+				err = file.Chmod(block.mode)
+				if err != nil {
+					logger.Println("Unable to chmod file to", block.mode, ":", err.Error())
+				}
 			}
 		} else if block.blockType == blockTypeEndOfFile {
 			bufferedFile.Flush()
