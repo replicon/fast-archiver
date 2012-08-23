@@ -131,6 +131,11 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 		if err == nil {
 			workInProgress.Add(len(files))
 			for _, file := range files {
+				if (file.Mode() & os.ModeSymlink) != 0 {
+					logger.Println("skipping symbolic link", file.Name())
+					workInProgress.Done()
+					continue
+				}
 				filePath := filepath.Join(directoryPath, file.Name())
 				if file.IsDir() {
 					directoryScanQueue <- filePath
