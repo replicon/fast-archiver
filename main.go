@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"flag"
 	"io"
-	"io/ioutil"
 	"log"
 	"math"
 	"os"
@@ -128,11 +127,12 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 			logger.Println(directoryPath)
 		}
 
-		files, err := ioutil.ReadDir(directoryPath)
+		directory, err := os.Open(directoryPath)
 		if err == nil {
-			workInProgress.Add(len(files))
-			for _, file := range files {
-				filePath := filepath.Join(directoryPath, file.Name())
+			for fileName := range readdirnames(int(directory.Fd())) {
+				workInProgress.Add(1)
+				filePath := filepath.Join(directoryPath, fileName)
+
 				excludeFile := false
 				for _, excludePattern := range excludePatterns {
 					match, err := filepath.Match(excludePattern, filePath)
@@ -145,17 +145,27 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 					logger.Println("skipping excluded file", filePath)
 					workInProgress.Done()
 					continue
-				} else if (file.Mode() & os.ModeSymlink) != 0 {
+				}
+
+				fileInfo, err := os.Lstat(filePath)
+				if err != nil {
+					logger.Println("unable to lstat file", err.Error())
+					workInProgress.Done()
+					continue
+				} else if (fileInfo.Mode() & os.ModeSymlink) != 0 {
 					logger.Println("skipping symbolic link", filePath)
 					workInProgress.Done()
 					continue
 				}
-				if file.IsDir() {
+
+				if fileInfo.IsDir() {
 					directoryScanQueue <- filePath
 				} else {
 					fileReadQueue <- filePath
 				}
 			}
+
+			directory.Close()
 		} else {
 			logger.Println("directory read error:", err.Error())
 		}
@@ -403,3 +413,49 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 	}
 	workInProgress.Done()
 }
+
+
+// Copy of os.Readdirnames for UNIX systems, but modified to return results
+// as found through a channel rather than in one large array.
+func readdirnames(fd int) chan string {
+	retval := make(chan string)
+	go func(fd int) {
+		var buf []byte = make([]byte, blockSize)
+		var nbuf int
+		var bufp int
+
+		for {
+			// Refill the buffer if necessary
+			if bufp >= nbuf {
+				bufp = 0
+				var errno error
+				nbuf, errno = syscall.ReadDirent(fd, buf)
+				if errno != nil {
+					err := os.NewSyscallError("readdirent", errno)
+					logger.Println("error reading directory:", err.Error())
+					break
+				}
+				if nbuf <= 0 {
+					break // EOF
+				}
+			}
+
+			// Drain the buffer
+			var nb, nc int
+			names := make([]string, 0, 100)
+			nb, nc, names = syscall.ParseDirent(buf[bufp:nbuf], -1, names)
+			bufp += nb
+
+			for i := 0; i < nc; i++ {
+				retval <- names[i]
+			}
+		}
+
+		close(retval)
+	}(fd)
+	return retval
+}
+
+
+
+
