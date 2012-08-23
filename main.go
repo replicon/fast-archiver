@@ -14,12 +14,20 @@ import (
 	"syscall"
 )
 
+type blockType int
+const (
+	blockTypeData = iota
+	blockTypeStartOfFile
+	blockTypeEndOfFile
+	blockTypeDirectory
+)
+
+
 type block struct {
 	filePath    string
 	numBytes    uint16
 	buffer      []byte
-	startOfFile bool
-	endOfFile   bool
+	blockType   blockType
 	uid         int
 	gid         int
 	mode        os.FileMode
@@ -201,7 +209,7 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 			}
 
 			workInProgress.Add(1)
-			fileWriterQueue <- block{filePath, 0, nil, true, false, uid, gid, mode}
+			fileWriterQueue <- block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
 
 			bufferedFile := bufio.NewReader(file)
 
@@ -216,11 +224,11 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 				}
 
 				workInProgress.Add(1)
-				fileWriterQueue <- block{filePath, uint16(bytesRead), buffer, false, false, 0, 0, 0}
+				fileWriterQueue <- block{filePath, uint16(bytesRead), buffer, blockTypeData, 0, 0, 0}
 			}
 
 			workInProgress.Add(1)
-			fileWriterQueue <- block{filePath, 0, nil, false, true, 0, 0, 0}
+			fileWriterQueue <- block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
 
 			file.Close()
 		} else {
@@ -245,7 +253,7 @@ func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgres
 			logger.Fatalln("Archive write error:", err.Error())
 		}
 
-		if block.startOfFile {
+		if block.blockType == blockTypeStartOfFile {
 			flags[0] = startOfFileFlag
 			_, err = output.Write(flags)
 			if err != nil {
@@ -263,13 +271,13 @@ func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgres
 			if err != nil {
 				logger.Fatalln("Archive write error:", err.Error())
 			}
-		} else if block.endOfFile {
+		} else if block.blockType == blockTypeEndOfFile {
 			flags[0] = endOfFileFlag
 			_, err = output.Write(flags)
 			if err != nil {
 				logger.Fatalln("Archive write error:", err.Error())
 			}
-		} else {
+		} else if block.blockType == blockTypeData {
 			flags[0] = dataBlockFlag
 			_, err = output.Write(flags)
 			if err != nil {
@@ -285,6 +293,8 @@ func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgres
 			if err != nil {
 				logger.Fatalln("Archive write error:", err.Error())
 			}
+		} else {
+			logger.Fatalln("Unexpected block type")
 		}
 
 		workInProgress.Done()
@@ -341,10 +351,10 @@ func archiveReader(file io.Reader) {
 			fileOutputChan[filePath] = c
 			workInProgress.Add(1)
 			go writeFile(c, &workInProgress)
-			c <- block{filePath, 0, nil, true, false, int(uid), int(gid), mode}
+			c <- block{filePath, 0, nil, blockTypeStartOfFile, int(uid), int(gid), mode}
 		} else if flag[0] == endOfFileFlag {
 			c := fileOutputChan[filePath]
-			c <- block{filePath, 0, nil, false, true, 0, 0, 0}
+			c <- block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
 			close(c)
 			delete(fileOutputChan, filePath)
 		} else if flag[0] == dataBlockFlag {
@@ -361,7 +371,7 @@ func archiveReader(file io.Reader) {
 			}
 
 			c := fileOutputChan[filePath]
-			c <- block{filePath, blockSize, blockData, false, false, 0, 0, 0}
+			c <- block{filePath, blockSize, blockData, blockTypeData, 0, 0, 0}
 		} else {
 			logger.Fatalln("Archive error: unrecognized block flag", flag[0])
 		}
@@ -374,7 +384,7 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 	var file *os.File = nil
 	var bufferedFile *bufio.Writer
 	for block := range blockSource {
-		if block.startOfFile {
+		if block.blockType == blockTypeStartOfFile {
 			if verbose {
 				logger.Println(block.filePath)
 			}
@@ -400,7 +410,7 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 			if err != nil {
 				logger.Println("Unable to chmod file to", block.mode, ":", err.Error())
 			}
-		} else if block.endOfFile {
+		} else if block.blockType == blockTypeEndOfFile {
 			bufferedFile.Flush()
 			file.Close()
 			file = nil
