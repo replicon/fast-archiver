@@ -124,7 +124,11 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInProgress *sync.WaitGroup) {
 	for filePath := range fileReadQueue {
 		file, err := os.Open(filePath)
-		if err != nil {
+		if os.IsNotExist(err) {
+			println("File no longer exists:", filePath)
+			workInProgress.Done()
+			continue
+		} else if err != nil {
 			println("File open error:", err.Error())
 			os.Exit(2)
 		}
