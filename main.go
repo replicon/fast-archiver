@@ -177,16 +177,17 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 			var gid int = 0
 			var mode os.FileMode = 0
 			fi, err := file.Stat()
-			if err == nil {
-				sysinfo := fi.Sys()
-				if sysinfo != nil {
-					stat_t := sysinfo.(*syscall.Stat_t)
-					if stat_t != nil {
-						uid = int(stat_t.Uid)
-						gid = int(stat_t.Gid)
-					}
-				}
+			if err != nil {
+				logger.Println("file stat error; uid/gid/mode will be incorrect:", err.Error())
+			} else {
 				mode = fi.Mode()
+				stat_t := fi.Sys().(*syscall.Stat_t)
+				if stat_t != nil {
+					uid = int(stat_t.Uid)
+					gid = int(stat_t.Gid)
+				} else {
+					logger.Println("unable to find file uid/gid")
+				}
 			}
 
 			workInProgress.Add(1)
