@@ -178,40 +178,40 @@ func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgres
 		filePath := []byte(block.filePath)
 		err := binary.Write(output, binary.BigEndian, uint16(len(filePath)))
 		if err != nil {
-			logger.Panicln("Archive write error:", err.Error())
+			logger.Fatalln("Archive write error:", err.Error())
 		}
 		_, err = output.Write(filePath)
 		if err != nil {
-			logger.Panicln("Archive write error:", err.Error())
+			logger.Fatalln("Archive write error:", err.Error())
 		}
 
 		if block.startOfFile {
 			flags[0] = startOfFileFlag
 			_, err = output.Write(flags)
 			if err != nil {
-				logger.Panicln("Archive write error:", err.Error())
+				logger.Fatalln("Archive write error:", err.Error())
 			}
 		} else if block.endOfFile {
 			flags[0] = endOfFileFlag
 			_, err = output.Write(flags)
 			if err != nil {
-				logger.Panicln("Archive write error:", err.Error())
+				logger.Fatalln("Archive write error:", err.Error())
 			}
 		} else {
 			flags[0] = dataBlockFlag
 			_, err = output.Write(flags)
 			if err != nil {
-				logger.Panicln("Archive write error:", err.Error())
+				logger.Fatalln("Archive write error:", err.Error())
 			}
 
 			err = binary.Write(output, binary.BigEndian, uint16(block.numBytes))
 			if err != nil {
-				logger.Panicln("Archive write error:", err.Error())
+				logger.Fatalln("Archive write error:", err.Error())
 			}
 
 			_, err = output.Write(block.buffer[:block.numBytes])
 			if err != nil {
-				logger.Panicln("Archive write error:", err.Error())
+				logger.Fatalln("Archive write error:", err.Error())
 			}
 		}
 
@@ -229,20 +229,20 @@ func archiveReader(file io.Reader) {
 		if err == io.EOF {
 			break
 		} else if err != nil {
-			logger.Panicln("Archive read error:", err.Error())
+			logger.Fatalln("Archive read error:", err.Error())
 		}
 
 		buf := make([]byte, pathSize)
 		_, err = io.ReadFull(file, buf)
 		if err != nil {
-			logger.Panicln("Archive read error:", err.Error())
+			logger.Fatalln("Archive read error:", err.Error())
 		}
 		filePath := string(buf)
 
 		flag := make([]byte, 1)
 		_, err = io.ReadFull(file, flag)
 		if err != nil {
-			logger.Panicln("Archive read error:", err.Error())
+			logger.Fatalln("Archive read error:", err.Error())
 		}
 
 		if flag[0] == startOfFileFlag {
@@ -260,19 +260,19 @@ func archiveReader(file io.Reader) {
 			var blockSize uint16
 			err = binary.Read(file, binary.BigEndian, &blockSize)
 			if err != nil {
-				logger.Panicln("Archive read error:", err.Error())
+				logger.Fatalln("Archive read error:", err.Error())
 			}
 
 			blockData := make([]byte, blockSize)
 			_, err = io.ReadFull(file, blockData)
 			if err != nil {
-				logger.Panicln("Archive read error:", err.Error())
+				logger.Fatalln("Archive read error:", err.Error())
 			}
 
 			c := fileOutputChan[filePath]
 			c <- block{filePath, blockSize, blockData, false, false}
 		} else {
-			logger.Panicln("Archive error: unrecognized block flag", flag[0])
+			logger.Fatalln("Archive error: unrecognized block flag", flag[0])
 		}
 	}
 
@@ -291,12 +291,12 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 			dir, _ := filepath.Split(block.filePath)
 			err := os.MkdirAll(dir, os.ModeDir|0755)
 			if err != nil {
-				logger.Panicln("Directory create error:", err.Error())
+				logger.Fatalln("Directory create error:", err.Error())
 			}
 
 			tmp, err := os.Create(block.filePath)
 			if err != nil {
-				logger.Panicln("File create error:", err.Error())
+				logger.Fatalln("File create error:", err.Error())
 			}
 			file = tmp
 			bufferedFile = bufio.NewWriter(file)
@@ -307,7 +307,7 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 		} else {
 			_, err := bufferedFile.Write(block.buffer[:block.numBytes])
 			if err != nil {
-				logger.Panicln("File write error:", err.Error())
+				logger.Fatalln("File write error:", err.Error())
 			}
 		}
 	}
