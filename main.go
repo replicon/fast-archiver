@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
 
@@ -32,11 +33,20 @@ const endOfFileFlag byte = 1 << 2
 func main() {
 	extract := flag.Bool("x", false, "extract archive")
 	create := flag.Bool("c", false, "create archive")
-	inputFileName := flag.String("i", "", "input file for extraction; defaults to stdin")
-	outputFileName := flag.String("o", "", "output file for creation; defaults to stdout")
-	requestedBlockSize := flag.Uint("block-size", 4096, "internal block-size, effective only during create archive")
+	inputFileName := flag.String("i", "", "input file for extraction; defaults to stdin (-x only)")
+	outputFileName := flag.String("o", "", "output file for creation; defaults to stdout (-c only)")
+	requestedBlockSize := flag.Uint("block-size", 4096, "internal block-size (-c only)")
+	dirReaderCount := flag.Int("dir-readers", 16, "number of simultaneous directory readers (-c only)")
+	fileReaderCount := flag.Int("file-readers", 16, "number of simultaneous file readers (-c only)")
+	directoryScanQueueSize := flag.Int("queue-dir", 128, "queue size for scanning directories (-c only)")
+	fileReadQueueSize := flag.Int("queue-read", 128, "queue size for reading files (-c only)")
+	fileWriteQueueSize := flag.Int("queue-write", 128, "queue size for archive write (-c only); increasing can cause increased memory usage")
+	multiCpu := flag.Int("multicpu", 1, "maximum number of CPUs that can be executing simultaneously")
+
 	flag.BoolVar(&verbose, "v", false, "verbose output on stderr")
 	flag.Parse()
+
+	runtime.GOMAXPROCS(*multiCpu)
 
 	logger = log.New(os.Stderr, "", 0)
 
@@ -66,9 +76,9 @@ func main() {
 			logger.Fatalln("Directories to archive must be specified")
 		}
 
-		var directoryScanQueue = make(chan string, 128)
-		var fileReadQueue = make(chan string, 128)
-		var fileWriteQueue = make(chan block, 128)
+		var directoryScanQueue = make(chan string, *directoryScanQueueSize)
+		var fileReadQueue = make(chan string, *fileReadQueueSize)
+		var fileWriteQueue = make(chan block, *fileWriteQueueSize)
 		var workInProgress sync.WaitGroup
 
 		var outputFile *os.File
@@ -84,10 +94,10 @@ func main() {
 
 		bufferedOutputFile := bufio.NewWriter(outputFile)
 		go archiveWriter(bufferedOutputFile, fileWriteQueue, &workInProgress)
-		for i := 0; i < 16; i++ {
+		for i := 0; i < *dirReaderCount; i++ {
 			go directoryScanner(directoryScanQueue, fileReadQueue, &workInProgress)
 		}
-		for i := 0; i < 16; i++ {
+		for i := 0; i < *fileReaderCount; i++ {
 			go fileReader(fileReadQueue, fileWriteQueue, &workInProgress)
 		}
 
