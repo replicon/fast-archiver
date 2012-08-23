@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/binary"
 	"flag"
 	"io"
@@ -56,7 +57,8 @@ func main() {
 			inputFile = os.Stdin
 		}
 
-		archiveReader(inputFile)
+		bufferedInputFile := bufio.NewReader(inputFile)
+		archiveReader(bufferedInputFile)
 		inputFile.Close()
 
 	} else if *create {
@@ -80,7 +82,8 @@ func main() {
 			outputFile = os.Stdout
 		}
 
-		go archiveWriter(outputFile, fileWriteQueue, &workInProgress)
+		bufferedOutputFile := bufio.NewWriter(outputFile)
+		go archiveWriter(bufferedOutputFile, fileWriteQueue, &workInProgress)
 		for i := 0; i < 16; i++ {
 			go directoryScanner(directoryScanQueue, fileReadQueue, &workInProgress)
 		}
@@ -97,6 +100,7 @@ func main() {
 		close(directoryScanQueue)
 		close(fileReadQueue)
 		close(fileWriteQueue)
+		bufferedOutputFile.Flush()
 		outputFile.Close()
 	} else {
 		logger.Fatalln("extract (-x) or create (-c) flag must be provided")
@@ -139,9 +143,11 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 			workInProgress.Add(1)
 			fileWriterQueue <- block{filePath, 0, nil, true, false}
 
+			bufferedFile := bufio.NewReader(file)
+
 			for {
 				buffer := make([]byte, blockSize)
-				bytesRead, err := file.Read(buffer)
+				bytesRead, err := bufferedFile.Read(buffer)
 				if err == io.EOF {
 					break
 				} else if err != nil {
@@ -165,7 +171,7 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 	}
 }
 
-func archiveWriter(output *os.File, fileWriterQueue <-chan block, workInProgress *sync.WaitGroup) {
+func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgress *sync.WaitGroup) {
 	flags := make([]byte, 1)
 
 	for block := range fileWriterQueue {
@@ -213,7 +219,7 @@ func archiveWriter(output *os.File, fileWriterQueue <-chan block, workInProgress
 	}
 }
 
-func archiveReader(file *os.File) {
+func archiveReader(file io.Reader) {
 	var workInProgress sync.WaitGroup
 	fileOutputChan := make(map[string]chan block)
 
@@ -270,12 +276,12 @@ func archiveReader(file *os.File) {
 		}
 	}
 
-	file.Close()
 	workInProgress.Wait()
 }
 
 func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 	var file *os.File = nil
+	var bufferedFile *bufio.Writer
 	for block := range blockSource {
 		if block.startOfFile {
 			if verbose {
@@ -293,11 +299,13 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 				logger.Panicln("File create error:", err.Error())
 			}
 			file = tmp
+			bufferedFile = bufio.NewWriter(file)
 		} else if block.endOfFile {
+			bufferedFile.Flush()
 			file.Close()
 			file = nil
 		} else {
-			_, err := file.Write(block.buffer[:block.numBytes])
+			_, err := bufferedFile.Write(block.buffer[:block.numBytes])
 			if err != nil {
 				logger.Panicln("File write error:", err.Error())
 			}
