@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"sync"
 )
 
@@ -20,6 +21,9 @@ type block struct {
 	buffer      []byte
 	startOfFile bool
 	endOfFile   bool
+	uid         int
+	gid         int
+	mode        os.FileMode
 }
 
 var blockSize uint16
@@ -151,7 +155,24 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 		file, err := os.Open(filePath)
 		if err == nil {
 			workInProgress.Add(1)
-			fileWriterQueue <- block{filePath, 0, nil, true, false}
+
+			var uid int = 0
+			var gid int = 0
+			var mode os.FileMode = 0
+			fi, err := file.Stat()
+			if err == nil {
+				sysinfo := fi.Sys()
+				if sysinfo != nil {
+					stat_t := sysinfo.(*syscall.Stat_t)
+					if stat_t != nil {
+						uid = int(stat_t.Uid)
+						gid = int(stat_t.Gid)
+					}
+				}
+				mode = fi.Mode()
+			}
+
+			fileWriterQueue <- block{filePath, 0, nil, true, false, uid, gid, mode}
 
 			bufferedFile := bufio.NewReader(file)
 
@@ -166,11 +187,11 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 				}
 
 				workInProgress.Add(1)
-				fileWriterQueue <- block{filePath, uint16(bytesRead), buffer, false, false}
+				fileWriterQueue <- block{filePath, uint16(bytesRead), buffer, false, false, 0, 0, 0}
 			}
 
 			workInProgress.Add(1)
-			fileWriterQueue <- block{filePath, 0, nil, false, true}
+			fileWriterQueue <- block{filePath, 0, nil, false, true, 0, 0, 0}
 
 			file.Close()
 		} else {
@@ -198,6 +219,18 @@ func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgres
 		if block.startOfFile {
 			flags[0] = startOfFileFlag
 			_, err = output.Write(flags)
+			if err != nil {
+				logger.Fatalln("Archive write error:", err.Error())
+			}
+			err = binary.Write(output, binary.BigEndian, uint32(block.uid))
+			if err != nil {
+				logger.Fatalln("Archive write error:", err.Error())
+			}
+			err = binary.Write(output, binary.BigEndian, uint32(block.gid))
+			if err != nil {
+				logger.Fatalln("Archive write error:", err.Error())
+			}
+			err = binary.Write(output, binary.BigEndian, block.mode)
 			if err != nil {
 				logger.Fatalln("Archive write error:", err.Error())
 			}
@@ -256,14 +289,33 @@ func archiveReader(file io.Reader) {
 		}
 
 		if flag[0] == startOfFileFlag {
+			var uid uint32
+			var gid uint32
+			var mode os.FileMode
+
+			err = binary.Read(file, binary.BigEndian, &uid)
+			if err != nil {
+				logger.Fatalln("Archive read error:", err.Error())
+			}
+
+			err = binary.Read(file, binary.BigEndian, &gid)
+			if err != nil {
+				logger.Fatalln("Archive read error:", err.Error())
+			}
+
+			err = binary.Read(file, binary.BigEndian, &mode)
+			if err != nil {
+				logger.Fatalln("Archive read error:", err.Error())
+			}
+
 			c := make(chan block, 1)
 			fileOutputChan[filePath] = c
 			workInProgress.Add(1)
 			go writeFile(c, &workInProgress)
-			c <- block{filePath, 0, nil, true, false}
+			c <- block{filePath, 0, nil, true, false, int(uid), int(gid), mode}
 		} else if flag[0] == endOfFileFlag {
 			c := fileOutputChan[filePath]
-			c <- block{filePath, 0, nil, false, true}
+			c <- block{filePath, 0, nil, false, true, 0, 0, 0}
 			close(c)
 			delete(fileOutputChan, filePath)
 		} else if flag[0] == dataBlockFlag {
@@ -280,7 +332,7 @@ func archiveReader(file io.Reader) {
 			}
 
 			c := fileOutputChan[filePath]
-			c <- block{filePath, blockSize, blockData, false, false}
+			c <- block{filePath, blockSize, blockData, false, false, 0, 0, 0}
 		} else {
 			logger.Fatalln("Archive error: unrecognized block flag", flag[0])
 		}
@@ -310,6 +362,15 @@ func writeFile(blockSource chan block, workInProgress *sync.WaitGroup) {
 			}
 			file = tmp
 			bufferedFile = bufio.NewWriter(file)
+
+			err = file.Chown(block.uid, block.gid)
+			if err != nil {
+				logger.Println("Unable to chown file to", block.uid, "/", block.gid, ":", err.Error())
+			}
+			err = file.Chmod(block.mode)
+			if err != nil {
+				logger.Println("Unable to chmod file to", block.mode, ":", err.Error())
+			}
 		} else if block.endOfFile {
 			bufferedFile.Flush()
 			file.Close()
