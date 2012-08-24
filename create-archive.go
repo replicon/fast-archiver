@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"encoding/binary"
+	"hash"
+	"hash/crc64"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,7 +12,7 @@ import (
 	"syscall"
 )
 
-func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string, fileWriterQueue chan block, excludePatterns []string, workInProgress *sync.WaitGroup) {
+func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string, blockQueue chan block, excludePatterns []string, workInProgress *sync.WaitGroup) {
 	for directoryPath := range directoryScanQueue {
 		if verbose {
 			logger.Println(directoryPath)
@@ -24,11 +26,9 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 		}
 
 		uid, gid, mode := getModeOwnership(directory)
-		workInProgress.Add(1)
-		fileWriterQueue <- block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
+		blockQueue <- block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
 
 		for fileName := range readdirnames(int(directory.Fd())) {
-			workInProgress.Add(1)
 			filePath := filepath.Join(directoryPath, fileName)
 
 			excludeFile := false
@@ -41,21 +41,19 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 			}
 			if excludeFile {
 				logger.Println("skipping excluded file", filePath)
-				workInProgress.Done()
 				continue
 			}
 
 			fileInfo, err := os.Lstat(filePath)
 			if err != nil {
 				logger.Println("unable to lstat file", err.Error())
-				workInProgress.Done()
 				continue
 			} else if (fileInfo.Mode() & os.ModeSymlink) != 0 {
 				logger.Println("skipping symbolic link", filePath)
-				workInProgress.Done()
 				continue
 			}
 
+			workInProgress.Add(1)
 			if fileInfo.IsDir() {
 				directoryScanQueue <- filePath
 			} else {
@@ -88,7 +86,7 @@ func getModeOwnership(file *os.File) (int, int, os.FileMode) {
 	return uid, gid, mode
 }
 
-func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInProgress *sync.WaitGroup) {
+func fileReader(fileReadQueue <-chan string, blockQueue chan block, workInProgress *sync.WaitGroup) {
 	for filePath := range fileReadQueue {
 		if verbose {
 			logger.Println(filePath)
@@ -98,9 +96,7 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 		if err == nil {
 
 			uid, gid, mode := getModeOwnership(file)
-
-			workInProgress.Add(1)
-			fileWriterQueue <- block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
+			blockQueue <- block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
 
 			bufferedFile := bufio.NewReader(file)
 
@@ -114,13 +110,10 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 					break
 				}
 
-				workInProgress.Add(1)
-				fileWriterQueue <- block{filePath, uint16(bytesRead), buffer, blockTypeData, 0, 0, 0}
+				blockQueue <- block{filePath, uint16(bytesRead), buffer, blockTypeData, 0, 0, 0}
 			}
 
-			workInProgress.Add(1)
-			fileWriterQueue <- block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
-
+			blockQueue <- block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
 			file.Close()
 		} else {
 			logger.Println("file open error:", err.Error())
@@ -130,10 +123,13 @@ func fileReader(fileReadQueue <-chan string, fileWriterQueue chan block, workInP
 	}
 }
 
-func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgress *sync.WaitGroup) {
-	flags := make([]byte, 1)
+func archiveWriter(output io.Writer, blockQueue <-chan block) {
+	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	output = io.MultiWriter(output, hash)
+	blockCount := 0
+	blockType := make([]byte, 1)
 
-	for block := range fileWriterQueue {
+	for block := range blockQueue {
 		filePath := []byte(block.filePath)
 		err := binary.Write(output, binary.BigEndian, uint16(len(filePath)))
 		if err != nil {
@@ -145,8 +141,8 @@ func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgres
 		}
 
 		if block.blockType == blockTypeStartOfFile {
-			flags[0] = startOfFileFlag
-			_, err = output.Write(flags)
+			blockType[0] = byte(blockTypeStartOfFile)
+			_, err = output.Write(blockType)
 			if err != nil {
 				logger.Fatalln("Archive write error:", err.Error())
 			}
@@ -163,14 +159,14 @@ func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgres
 				logger.Fatalln("Archive write error:", err.Error())
 			}
 		} else if block.blockType == blockTypeEndOfFile {
-			flags[0] = endOfFileFlag
-			_, err = output.Write(flags)
+			blockType[0] = byte(blockTypeEndOfFile)
+			_, err = output.Write(blockType)
 			if err != nil {
 				logger.Fatalln("Archive write error:", err.Error())
 			}
 		} else if block.blockType == blockTypeData {
-			flags[0] = dataBlockFlag
-			_, err = output.Write(flags)
+			blockType[0] = byte(blockTypeData)
+			_, err = output.Write(blockType)
 			if err != nil {
 				logger.Fatalln("Archive write error:", err.Error())
 			}
@@ -185,8 +181,8 @@ func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgres
 				logger.Fatalln("Archive write error:", err.Error())
 			}
 		} else if block.blockType == blockTypeDirectory {
-			flags[0] = directoryFlag
-			_, err = output.Write(flags)
+			blockType[0] = byte(blockTypeDirectory)
+			_, err = output.Write(blockType)
 			if err != nil {
 				logger.Fatalln("Archive write error:", err.Error())
 			}
@@ -203,11 +199,31 @@ func archiveWriter(output io.Writer, fileWriterQueue <-chan block, workInProgres
 				logger.Fatalln("Archive write error:", err.Error())
 			}
 		} else {
-			logger.Fatalln("Unexpected block type")
+			logger.Panicln("Unexpected block type")
 		}
 
-		workInProgress.Done()
+		blockCount += 1
+		if (blockCount % 1000) == 0 {
+			writeChecksumBlock(hash, output, blockType)
+		}
 	}
+
+	writeChecksumBlock(hash, output, blockType)
+}
+
+func writeChecksumBlock(hash hash.Hash64, output io.Writer, blockType []byte) {
+	// file path length... zero
+	err := binary.Write(output, binary.BigEndian, uint16(0))
+	if err != nil {
+		logger.Fatalln("Archive write error:", err.Error())
+	}
+
+	blockType[0] = byte(blockTypeChecksum)
+	_, err = output.Write(blockType)
+	if err != nil {
+		logger.Fatalln("Archive write error:", err.Error())
+	}
+	binary.Write(output, binary.BigEndian, hash.Sum64())
 }
 
 // Copy of os.Readdirnames for UNIX systems, but modified to return results

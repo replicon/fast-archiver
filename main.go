@@ -11,13 +11,14 @@ import (
 	"sync"
 )
 
-type blockType int
+type blockType byte
 
 const (
-	blockTypeData = iota
+	blockTypeData blockType = iota
 	blockTypeStartOfFile
 	blockTypeEndOfFile
 	blockTypeDirectory
+	blockTypeChecksum
 )
 
 type block struct {
@@ -36,11 +37,6 @@ var logger *log.Logger
 var ignorePerms bool
 var ignoreOwners bool
 
-const dataBlockFlag byte = 1 << 0
-const startOfFileFlag byte = 1 << 1
-const endOfFileFlag byte = 1 << 2
-const directoryFlag byte = 1 << 3
-
 func main() {
 	extract := flag.Bool("x", false, "extract archive")
 	create := flag.Bool("c", false, "create archive")
@@ -51,7 +47,7 @@ func main() {
 	fileReaderCount := flag.Int("file-readers", 16, "number of simultaneous file readers (-c only)")
 	directoryScanQueueSize := flag.Int("queue-dir", 128, "queue size for scanning directories (-c only)")
 	fileReadQueueSize := flag.Int("queue-read", 128, "queue size for reading files (-c only)")
-	fileWriteQueueSize := flag.Int("queue-write", 128, "queue size for archive write (-c only); increasing can cause increased memory usage")
+	blockQueueSize := flag.Int("queue-write", 128, "queue size for archive write (-c only); increasing can cause increased memory usage")
 	multiCpu := flag.Int("multicpu", 1, "maximum number of CPUs that can be executing simultaneously")
 	exclude := flag.String("exclude", "", "file patterns to exclude (eg. core.*); can be path list separated (eg. : in Linux) for multiple excludes (-c only)")
 	flag.BoolVar(&verbose, "v", false, "verbose output on stderr")
@@ -91,7 +87,7 @@ func main() {
 
 		var directoryScanQueue = make(chan string, *directoryScanQueueSize)
 		var fileReadQueue = make(chan string, *fileReadQueueSize)
-		var fileWriteQueue = make(chan block, *fileWriteQueueSize)
+		var blockQueue = make(chan block, *blockQueueSize)
 		var workInProgress sync.WaitGroup
 		var excludes = filepath.SplitList(*exclude)
 
@@ -107,12 +103,11 @@ func main() {
 		}
 
 		bufferedOutputFile := bufio.NewWriter(outputFile)
-		go archiveWriter(bufferedOutputFile, fileWriteQueue, &workInProgress)
 		for i := 0; i < *dirReaderCount; i++ {
-			go directoryScanner(directoryScanQueue, fileReadQueue, fileWriteQueue, excludes, &workInProgress)
+			go directoryScanner(directoryScanQueue, fileReadQueue, blockQueue, excludes, &workInProgress)
 		}
 		for i := 0; i < *fileReaderCount; i++ {
-			go fileReader(fileReadQueue, fileWriteQueue, &workInProgress)
+			go fileReader(fileReadQueue, blockQueue, &workInProgress)
 		}
 
 		for i := 0; i < flag.NArg(); i++ {
@@ -120,10 +115,14 @@ func main() {
 			directoryScanQueue <- flag.Arg(i)
 		}
 
-		workInProgress.Wait()
-		close(directoryScanQueue)
-		close(fileReadQueue)
-		close(fileWriteQueue)
+		go func() {
+			workInProgress.Wait()
+			close(directoryScanQueue)
+			close(fileReadQueue)
+			close(blockQueue)
+		}()
+
+		archiveWriter(bufferedOutputFile, blockQueue)
 		bufferedOutputFile.Flush()
 		outputFile.Close()
 	} else {

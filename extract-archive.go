@@ -3,14 +3,33 @@ package main
 import (
 	"bufio"
 	"encoding/binary"
+	"hash"
+	"hash/crc64"
 	"io"
 	"os"
 	"sync"
 )
 
+// An io.Reader implementation that also keeps a crc64 as it reads.  Fancy!
+type hashingReader struct {
+	innerReader io.Reader
+	hasher      hash.Hash64
+}
+
+func (r hashingReader) Read(buf []byte) (int, error) {
+	n, err := r.innerReader.Read(buf)
+	if err == nil {
+		r.hasher.Write(buf[:n])
+	}
+	return n, err
+}
+
 func archiveReader(file io.Reader) {
 	var workInProgress sync.WaitGroup
 	fileOutputChan := make(map[string]chan block)
+
+	hashReader := hashingReader{file, crc64.New(crc64.MakeTable(crc64.ECMA))}
+	file = hashReader
 
 	for {
 		var pathSize uint16
@@ -28,13 +47,13 @@ func archiveReader(file io.Reader) {
 		}
 		filePath := string(buf)
 
-		flag := make([]byte, 1)
-		_, err = io.ReadFull(file, flag)
+		blockType := make([]byte, 1)
+		_, err = io.ReadFull(file, blockType)
 		if err != nil {
 			logger.Fatalln("Archive read error:", err.Error())
 		}
 
-		if flag[0] == startOfFileFlag {
+		if blockType[0] == byte(blockTypeStartOfFile) {
 			var uid uint32
 			var gid uint32
 			var mode os.FileMode
@@ -59,12 +78,12 @@ func archiveReader(file io.Reader) {
 			workInProgress.Add(1)
 			go writeFile(c, &workInProgress)
 			c <- block{filePath, 0, nil, blockTypeStartOfFile, int(uid), int(gid), mode}
-		} else if flag[0] == endOfFileFlag {
+		} else if blockType[0] == byte(blockTypeEndOfFile) {
 			c := fileOutputChan[filePath]
 			c <- block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
 			close(c)
 			delete(fileOutputChan, filePath)
-		} else if flag[0] == dataBlockFlag {
+		} else if blockType[0] == byte(blockTypeData) {
 			var blockSize uint16
 			err = binary.Read(file, binary.BigEndian, &blockSize)
 			if err != nil {
@@ -79,7 +98,7 @@ func archiveReader(file io.Reader) {
 
 			c := fileOutputChan[filePath]
 			c <- block{filePath, blockSize, blockData, blockTypeData, 0, 0, 0}
-		} else if flag[0] == directoryFlag {
+		} else if blockType[0] == byte(blockTypeDirectory) {
 			var uid uint32
 			var gid uint32
 			var mode os.FileMode
@@ -110,8 +129,17 @@ func archiveReader(file io.Reader) {
 					logger.Println("Directory chown error:", err.Error())
 				}
 			}
+		} else if blockType[0] == byte(blockTypeChecksum) {
+			currentChecksum := hashReader.hasher.Sum64()
+
+			var expectedChecksum uint64
+			binary.Read(file, binary.BigEndian, &expectedChecksum)
+
+			if expectedChecksum != currentChecksum {
+				logger.Fatalln("crc64 mismatch, expected", expectedChecksum, "was", currentChecksum)
+			}
 		} else {
-			logger.Fatalln("Archive error: unrecognized block flag", flag[0])
+			logger.Fatalln("Archive error: unrecognized block type", blockType[0])
 		}
 	}
 
