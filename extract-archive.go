@@ -36,7 +36,7 @@ func archiveReader(file io.Reader) {
 	_, err := io.ReadFull(file, fileHeader)
 	if err != nil {
 		logger.Fatalln("Archive read error:", err.Error())
-	} else if bytes.Compare(fileHeader, fastArchiverHeader) != 0 {
+	} else if bytes.Equal(fileHeader, fastArchiverHeader) {
 		logger.Fatalln("Archive header not recognized")
 	}
 
