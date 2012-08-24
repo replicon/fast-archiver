@@ -56,53 +56,66 @@ build`` in the fast-archiver directory.
 Command-line arguments
 ----------------------
 
-+------------------+-------------------------------------------------------------------------------+
-| -x               | Extract archive mode.                                                         |
-+------------------+-------------------------------------------------------------------------------+
-| -c               | Create archive mode.                                                          |
-+------------------+-------------------------------------------------------------------------------+
-| --multicpu       | Allows concurrent activities to run on the specified number of CPUs.  Since   |
-|                  | the archiving is dominated by I/O, additional CPUs tend to just add overhead  |
-|                  | in communicating between concurrent processes, but it could increase          |
-|                  | throughput in some scenarios.  Defaults to 1.                                 |
-+------------------+-------------------------------------------------------------------------------+
+
+-x
+    Extract archive mode.
+
+-c
+    Create archive mode.
+
+--multicpu
+    Allows concurrent activities to run on the specified number of CPUs.  Since
+    the archiving is dominated by I/O, additional CPUs tend to just add
+    overhead in communicating between concurrent processes, but it could
+    increase throughput in some scenarios.  Defaults to 1.
 
 
 Create-mode only
 ================
 
-+------------------+-----------------------------------------------------------------------------------------+
-| -o               | Output path for the archive.  Defaults to stdout.                                       |
-+------------------+-----------------------------------------------------------------------------------------+
-| --exclude        | A colon-separated list of paths to exclude from the archive.  Can include               |
-|                  | wildcards and other shell matching constructs.                                          |
-+------------------+-----------------------------------------------------------------------------------------+
-| --block-size     | Specifies the size of blocks being read from disk, in bytes.  The larger                |
-|                  | the block size, the more memory fast-archiver will use, but it could result             |
-|                  | in higher I/O rates.  Defaults to 4096, maximum value is 65535.                         |
-+------------------+-----------------------------------------------------------------------------------------+
-| --dir-readers    | The maximum number of directories that will be read concurrently.  Defaults to 16.      |
-+------------------+-----------------------------------------------------------------------------------------+
-| --file-readers   | The maximum number of files that will be read concurrently.  Defaults to 16.            |
-+------------------+-----------------------------------------------------------------------------------------+
-| --queue-dir      | The maximum size of the queue for sub-directory paths to be processed. Defaults to 128. |
-+------------------+-----------------------------------------------------------------------------------------+
-| --queue-read     | The maximum size of the queue for file paths to be processed.  Defaults to 128.         |
-+------------------+-----------------------------------------------------------------------------------------+
-| --queue-write    | The maximum size of the block queue for archive output.  Increasing this will increase  |
-|                  | the potential memory usage, as (queue-write * block-size) memory could be allocated for |
-|                  | file reads.  Defaults to 128.                                                           |
-+------------------+-----------------------------------------------------------------------------------------+
+-o
+    Output path for the archive.  Defaults to stdout.
+
+--exclude
+    A colon-separated list of paths to exclude from the archive.  Can include
+    wildcards and other shell matching constructs.
+
+--block-size
+    Specifies the size of blocks being read from disk, in bytes.  The larger
+    the block size, the more memory fast-archiver will use, but it could result
+    in higher I/O rates.  Defaults to 4096, maximum value is 65535.
+
+--dir-readers
+    The maximum number of directories that will be read concurrently.  Defaults
+    to 16.
+
+--file-readers
+    The maximum number of files that will be read concurrently.  Defaults to
+    16.
+
+--queue-dir
+    The maximum size of the queue for sub-directory paths to be processed.
+    Defaults to 128.
+
+--queue-read
+    The maximum size of the queue for file paths to be processed.  Defaults to
+    128.
+
+--queue-write
+    The maximum size of the block queue for archive output.  Increasing this
+    will increase the potential memory usage, as (queue-write * block-size)
+    memory could be allocated for file reads.  Defaults to 128.
 
 
 Extract-mode only
 =================
 
-+-----------------+-----------------------------------------------------------------------+
-| -i              | Input path for the archive.  Defaults to stdin.                       |
-+-----------------+-----------------------------------------------------------------------+
-| --ignore-perms  | Do not restore permissions on files and directories.                  |
-+-----------------+-----------------------------------------------------------------------+
-| --ignore-owners | Do not restore uid and gid on files and directories.                  |
-+-----------------+-----------------------------------------------------------------------+
+-i
+    Input path for the archive.  Defaults to stdin.
+
+--ignore-perms
+    Do not restore permissions on files and directories.
+
+--ignore-owners
+    Do not restore uid and gid on files and directories.
 
