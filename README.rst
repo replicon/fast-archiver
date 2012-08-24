@@ -56,18 +56,16 @@ build`` in the fast-archiver directory.
 Command-line arguments
 ----------------------
 
-
--x
-    Extract archive mode.
-
--c
-    Create archive mode.
-
---multicpu
-    Allows concurrent activities to run on the specified number of CPUs.  Since
-    the archiving is dominated by I/O, additional CPUs tend to just add
-    overhead in communicating between concurrent processes, but it could
-    increase throughput in some scenarios.  Defaults to 1.
++--------------+-------------------------------------------------------------------------------+
+| -x           | Extract archive mode.                                                         |
++--------------+-------------------------------------------------------------------------------+
+| -c           | Create archive mode.                                                          |
++--------------+-------------------------------------------------------------------------------+
+| --multicpu   | Allows concurrent activities to run on the specified number of CPUs.  Since   |
+|              | the archiving is dominated by I/O, additional CPUs tend to just add overhead  |
+|              | in communicating between concurrent processes, but it could increase          |
+|              | throughput in some scenarios.  Defaults to 1.                                 |
++--------------+-------------------------------------------------------------------------------+
 
 
 Create-mode only
