@@ -47,8 +47,9 @@ through ssh::
 Build
 -----
 
-fast-archiver is written in `Go`_, for Go version 1.  To build it, run ``go
-build`` in the fast-archiver directory.
+fast-archiver is written in `Go`_, for Go version 1.  fast-archiver uses the Go
+build system, but with a little shell script around it to enter the current git
+repo version numbers.  To build, run the ``build.sh`` script.
 
 .. _Go: http://golang.org/
 

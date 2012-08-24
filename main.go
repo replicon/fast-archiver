@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"flag"
+	"fmt"
 	"log"
 	"math"
 	"os"
@@ -40,8 +41,16 @@ var verbose bool
 var logger *log.Logger
 var ignorePerms bool
 var ignoreOwners bool
+var tag string
+var rev string
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "%s (tag: %s, rev: %s)\n", os.Args[0], tag, rev)
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+
 	extract := flag.Bool("x", false, "extract archive")
 	create := flag.Bool("c", false, "create archive")
 	inputFileName := flag.String("i", "", "input file for extraction; defaults to stdin (-x only)")
