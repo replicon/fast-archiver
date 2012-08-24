@@ -65,7 +65,7 @@ Command-line arguments
 |                  | the archiving is dominated by I/O, additional CPUs tend to just add overhead  |
 |                  | in communicating between concurrent processes, but it could increase          |
 |                  | throughput in some scenarios.  Defaults to 1.                                 |
-+------------------+-------------------------------------------------------------------------------+
++------------------ +-------------------------------------------------------------------------------+
 
 
 Create-mode only
@@ -108,12 +108,11 @@ Create-mode only
 Extract-mode only
 =================
 
--i
-    Input path for the archive.  Defaults to stdin.
-
---ignore-perms
-    Do not restore permissions on files and directories.
-
---ignore-owners
-    Do not restore uid and gid on files and directories.
++-----------------+-----------------------------------------------------------------------+
+| -i              | Input path for the archive.  Defaults to stdin.                       |
++-----------------+-----------------------------------------------------------------------+
+| --ignore-perms  | Do not restore permissions on files and directories.                  |
++-----------------+-----------------------------------------------------------------------+
+| --ignore-owners | Do not restore uid and gid on files and directories.                  |
++-----------------+-----------------------------------------------------------------------+
 
