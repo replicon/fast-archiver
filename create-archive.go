@@ -129,9 +129,16 @@ func archiveWriter(output io.Writer, blockQueue <-chan block) {
 	blockCount := 0
 	blockType := make([]byte, 1)
 
+	// Archive header: stole ideas from the PNG file header here, but replaced
+	// 'PNG' with 'FA1' to identify the fast-archive version 1 format.
+	_, err := output.Write([]byte{0x89, 0x46, 0x41, 0x31, 0x0D, 0x0A, 0x1A, 0x0A})
+	if err != nil {
+		logger.Fatalln("Archive write error:", err.Error())
+	}
+
 	for block := range blockQueue {
 		filePath := []byte(block.filePath)
-		err := binary.Write(output, binary.BigEndian, uint16(len(filePath)))
+		err = binary.Write(output, binary.BigEndian, uint16(len(filePath)))
 		if err != nil {
 			logger.Fatalln("Archive write error:", err.Error())
 		}

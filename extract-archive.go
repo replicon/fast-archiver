@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"hash"
 	"hash/crc64"
@@ -31,9 +32,17 @@ func archiveReader(file io.Reader) {
 	hashReader := hashingReader{file, crc64.New(crc64.MakeTable(crc64.ECMA))}
 	file = hashReader
 
+	fileHeader := make([]byte, 8)
+	_, err := io.ReadFull(file, fileHeader)
+	if err != nil {
+		logger.Fatalln("Archive read error:", err.Error())
+	} else if bytes.Compare(fileHeader, fastArchiverHeader) != 0 {
+		logger.Fatalln("Archive header not recognized")
+	}
+
 	for {
 		var pathSize uint16
-		err := binary.Read(file, binary.BigEndian, &pathSize)
+		err = binary.Read(file, binary.BigEndian, &pathSize)
 		if err == io.EOF {
 			break
 		} else if err != nil {
