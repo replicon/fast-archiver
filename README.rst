@@ -4,25 +4,52 @@ fast-archiver
 fast-archiver is a command-line tool for archiving directories, and restoring
 those archives.
 
-The "fast" part of the archiver is two-fold:
+fast-archiver uses a few techniques to try to be more efficient than
+traditional tools:
 
-1. fast-archiver reads a number of files concurrently and then serializes
-   the output, allowing it to have higher throughput on large numbers
-   of small files, and
+1. It reads a number of files concurrently and then serializes the output.
+   Most other tools use sequential file processing, where operations like
+   ``open()``, ``lstat()``, and ``close()`` can cause a lot of overhead when
+   reading huge numbers of small files.  Making these operations concurrent
+   means that the tool is more often reading and writing data than you would
+   be otherwise.
 
-2. it begins archiving files before it has completed reading the directory
+2. It begins archiving files before it has completed reading the directory
    entries that it is archiving, allowing for a fast startup time
    compared to tools that first create an inventory of files to
    transfer.
 
-For example, this tool was tested on a PostgreSQL server with a 90 gigabyte
-database.  The pg_data directory contained a total of 2,089,214 files, the
-majority of which were 8kiB to 24kiB in size.  fast-archiver piped over ssh
-could transfer this database from one machine to another in 1 hour, 30 minutes;
-rsync took over 3 hours.  Even though rsync could avoid copying files that had
-matching sizes and timestamps, fast-archiver was still faster because it went
-straight for high-I/O instead.
+How Fast?
+---------
 
+On a test workload of 2,089,214 files representing a total of 90 GiB of data,
+fast-archiver was compared with tar and rsync for reading data files and
+transfering them over a network.  The test scenario was a PostgreSQL
+database, with many of the files being small, 8-24kiB in size.
+
+Compared with tar, fast-archiver took 33% of the execution time (27m 38s vs.
+1h 23m 23s) to read the test workload and output the archive to /dev/null.
+The tar output had to be redirected through cat to create a comparable
+scenario, because tar recognized /dev/null and shortcuts the actual data file
+reading and writing.  Here's the raw timing output for some hard data::
+
+    $ time fast-archiver -c -o /dev/null /db/data
+    skipping symbolic link /db/data/pg_xlog
+    1008.92user 663.00system 27:38.27elapsed 100%CPU (0avgtext+0avgdata 24352maxresident)k
+    0inputs+0outputs (0major+1732minor)pagefaults 0swaps
+    
+    $ time tar -cf - /db/data | cat > /dev/null
+    tar: Removing leading `/' from member names
+    tar: /db/data/base/16408/12445.2: file changed as we read it
+    tar: /db/data/base/16408/12464: file changed as we read it
+    32.68user 375.19system 1:23:23elapsed 8%CPU (0avgtext+0avgdata 81744maxresident)k
+    0inputs+0outputs (0major+5163minor)pagefaults 0swaps
+
+Compared with rsync, fast-archiver piped over ssh can transfer the database
+from one machine to another in 1h 30m, vs. rsync in 3h.
+
+These huge reductions in time may not be typical, but they happen to be the
+workload that fast-archiver was designed for.
 
 Examples
 --------
