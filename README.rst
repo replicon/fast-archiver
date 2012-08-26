@@ -26,7 +26,7 @@ database, with many of the files being small, 8-24kiB in size.
 Compared with tar, fast-archiver took 33% of the execution time (27m 38s vs.
 1h 23m 23s) to read the test workload and output the archive to /dev/null.
 Note that tar shortcuts writing to /dev/null unless you pipe it there
-indirectly.
+indirectly.  Here's the raw timing output for some hard data::
 
     $ time fast-archiver -c -o /dev/null /db/data
     skipping symbolic link /db/data/pg_xlog
