@@ -15,14 +15,36 @@ The "fast" part of the archiver is two-fold:
    compared to tools that first create an inventory of files to
    transfer.
 
-For example, this tool was tested on a PostgreSQL server with a 90 gigabyte
-database.  The pg_data directory contained a total of 2,089,214 files, the
-majority of which were 8kiB to 24kiB in size.  fast-archiver piped over ssh
-could transfer this database from one machine to another in 1 hour, 30 minutes;
-rsync took over 3 hours.  Even though rsync could avoid copying files that had
-matching sizes and timestamps, fast-archiver was still faster because it went
-straight for high-I/O instead.
+How Fast?
+---------
 
+On a test workload of 2,089,214 files representing a total of 90 GiB of data,
+fast-archiver was compared with tar and rsync for (a) reading all the files,
+and (b) transfering them over a network.  The test scenario was a PostgreSQL
+database, with many of the files being small, 8-24kiB in size.
+
+Compared with tar, fast-archiver took 33% of the execution time (27m 38s vs.
+1h 23m 23s) to read the test workload and output the archive to /dev/null.
+Note that tar shortcuts writing to /dev/null unless you pipe it there
+indirectly.
+
+    $ time fast-archiver -c -o /dev/null /db/data
+    skipping symbolic link /db/data/pg_xlog
+    1008.92user 663.00system 27:38.27elapsed 100%CPU (0avgtext+0avgdata 24352maxresident)k
+    0inputs+0outputs (0major+1732minor)pagefaults 0swaps
+    
+    $ time tar -cf - /db/data | cat > /dev/null
+    tar: Removing leading `/' from member names
+    tar: /db/data/base/16408/12445.2: file changed as we read it
+    tar: /db/data/base/16408/12464: file changed as we read it
+    32.68user 375.19system 1:23:23elapsed 8%CPU (0avgtext+0avgdata 81744maxresident)k
+    0inputs+0outputs (0major+5163minor)pagefaults 0swaps
+
+Compared with rsync, fast-archiver piped over ssh can transfer the database
+from one machine to another in 1h 30m, vs. rsync in 3h.
+
+These huge reductions in time may not be typical, but they happen to be the
+workload that fast-archiver was designed for.
 
 Examples
 --------
