@@ -28,7 +28,7 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 		uid, gid, mode := getModeOwnership(directory)
 		blockQueue <- block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
 
-		for fileName := range readdirnames(int(directory.Fd())) {
+		for fileName := range readdirnames(directory) {
 			filePath := filepath.Join(directoryPath, fileName)
 
 			excludeFile := false
@@ -242,43 +242,22 @@ func writeChecksumBlock(hash hash.Hash64, output io.Writer, blockType []byte) {
 	binary.Write(output, binary.BigEndian, hash.Sum64())
 }
 
-// Copy of os.Readdirnames for UNIX systems, but modified to return results
-// as found through a channel rather than in one large array.
-func readdirnames(fd int) chan string {
-	retval := make(chan string)
-	go func(fd int) {
-		var buf []byte = make([]byte, blockSize)
-		var nbuf int
-		var bufp int
-
+// Wrapper for Readdirnames that converts it into a generator-style method.
+func readdirnames(dir *os.File) chan string {
+	retval := make(chan string, 256)
+	go func(dir *os.File) {
 		for {
-			// Refill the buffer if necessary
-			if bufp >= nbuf {
-				bufp = 0
-				var errno error
-				nbuf, errno = syscall.ReadDirent(fd, buf)
-				if errno != nil {
-					err := os.NewSyscallError("readdirent", errno)
-					logger.Println("error reading directory:", err.Error())
-					break
-				}
-				if nbuf <= 0 {
-					break // EOF
-				}
+			names, err := dir.Readdirnames(256)
+			if err == io.EOF {
+				break
+			} else if err != nil {
+				logger.Println("error reading directory:", err.Error())
 			}
-
-			// Drain the buffer
-			var nb, nc int
-			names := make([]string, 0, 100)
-			nb, nc, names = syscall.ParseDirent(buf[bufp:nbuf], -1, names)
-			bufp += nb
-
-			for i := 0; i < nc; i++ {
-				retval <- names[i]
+			for _, name := range names {
+				retval <- name
 			}
 		}
-
 		close(retval)
-	}(fd)
+	}(dir)
 	return retval
 }
