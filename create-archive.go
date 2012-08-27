@@ -55,7 +55,16 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 
 			workInProgress.Add(1)
 			if fileInfo.IsDir() {
-				directoryScanQueue <- filePath
+				// Sending to directoryScanQueue can block if it's full; since
+				// we're also the goroutine responsible for reading from it,
+				// this could cause a deadlock.  We break that deadlock by
+				// performing the send in a goroutine, where it can block
+				// safely.  This does have the side-effect that
+				// directoryScanQueue's max size is pretty much ineffective...
+				// but that's better than a deadlock.
+				go func(filePath string) {
+					directoryScanQueue <- filePath
+				}(filePath)
 			} else {
 				fileReadQueue <- filePath
 			}
