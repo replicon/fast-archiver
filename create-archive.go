@@ -146,98 +146,62 @@ func archiveWriter(output io.Writer, blockQueue <-chan block) {
 	for block := range blockQueue {
 		filePath := []byte(block.filePath)
 		err = binary.Write(output, binary.BigEndian, uint16(len(filePath)))
-		if err != nil {
-			logger.Fatalln("Archive write error:", err.Error())
+		if err == nil {
+			_, err = output.Write(filePath)
 		}
-		_, err = output.Write(filePath)
-		if err != nil {
-			logger.Fatalln("Archive write error:", err.Error())
+		if err == nil {
+			blockType[0] = byte(block.blockType)
+			_, err = output.Write(blockType)
 		}
-
-		if block.blockType == blockTypeStartOfFile {
-			blockType[0] = byte(blockTypeStartOfFile)
-			_, err = output.Write(blockType)
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
+		if err == nil {
+			switch block.blockType {
+			case blockTypeDirectory, blockTypeStartOfFile:
+				err = binary.Write(output, binary.BigEndian, uint32(block.uid))
+				if err == nil {
+					err = binary.Write(output, binary.BigEndian, uint32(block.gid))
+				}
+				if err == nil {
+					err = binary.Write(output, binary.BigEndian, block.mode)
+				}
+			case blockTypeEndOfFile:
+				// Nothing to write aside from the block type
+			case blockTypeData:
+				err = binary.Write(output, binary.BigEndian, uint16(block.numBytes))
+				if err == nil {
+					_, err = output.Write(block.buffer[:block.numBytes])
+				}
+			default:
+				logger.Panicln("Unexpected block type")
 			}
-			err = binary.Write(output, binary.BigEndian, uint32(block.uid))
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-			err = binary.Write(output, binary.BigEndian, uint32(block.gid))
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-			err = binary.Write(output, binary.BigEndian, block.mode)
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-		} else if block.blockType == blockTypeEndOfFile {
-			blockType[0] = byte(blockTypeEndOfFile)
-			_, err = output.Write(blockType)
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-		} else if block.blockType == blockTypeData {
-			blockType[0] = byte(blockTypeData)
-			_, err = output.Write(blockType)
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-
-			err = binary.Write(output, binary.BigEndian, uint16(block.numBytes))
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-
-			_, err = output.Write(block.buffer[:block.numBytes])
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-		} else if block.blockType == blockTypeDirectory {
-			blockType[0] = byte(blockTypeDirectory)
-			_, err = output.Write(blockType)
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-			err = binary.Write(output, binary.BigEndian, uint32(block.uid))
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-			err = binary.Write(output, binary.BigEndian, uint32(block.gid))
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-			err = binary.Write(output, binary.BigEndian, block.mode)
-			if err != nil {
-				logger.Fatalln("Archive write error:", err.Error())
-			}
-		} else {
-			logger.Panicln("Unexpected block type")
 		}
 
 		blockCount += 1
-		if (blockCount % 1000) == 0 {
-			writeChecksumBlock(hash, output, blockType)
+		if err == nil && (blockCount % 1000) == 0 {
+			err = writeChecksumBlock(hash, output, blockType)
+		}
+
+		if err != nil {
+			logger.Fatalln("Archive write error:", err.Error())
 		}
 	}
 
-	writeChecksumBlock(hash, output, blockType)
+	err = writeChecksumBlock(hash, output, blockType)
+	if err != nil {
+		logger.Fatalln("Archive write error:", err.Error())
+	}
 }
 
-func writeChecksumBlock(hash hash.Hash64, output io.Writer, blockType []byte) {
+func writeChecksumBlock(hash hash.Hash64, output io.Writer, blockType []byte) (error) {
 	// file path length... zero
 	err := binary.Write(output, binary.BigEndian, uint16(0))
-	if err != nil {
-		logger.Fatalln("Archive write error:", err.Error())
+	if err == nil {
+		blockType[0] = byte(blockTypeChecksum)
+		_, err = output.Write(blockType)
 	}
-
-	blockType[0] = byte(blockTypeChecksum)
-	_, err = output.Write(blockType)
-	if err != nil {
-		logger.Fatalln("Archive write error:", err.Error())
+	if err == nil {
+		err = binary.Write(output, binary.BigEndian, hash.Sum64())
 	}
-	binary.Write(output, binary.BigEndian, hash.Sum64())
+	return err
 }
 
 // Wrapper for Readdirnames that converts it into a generator-style method.
