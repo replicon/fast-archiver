@@ -136,11 +136,46 @@ func fileReader(fileReadQueue <-chan string, blockQueue chan block, workInProgre
 	}
 }
 
+func (b *block) writeBlock(output io.Writer) (error) {
+	filePath := []byte(b.filePath)
+	err := binary.Write(output, binary.BigEndian, uint16(len(filePath)))
+	if err == nil {
+		_, err = output.Write(filePath)
+	}
+	if err == nil {
+		blockType := []byte{byte(b.blockType)}
+	//blockType := make([]byte, 1)
+		//blockType[0] = byte(b.blockType)
+		_, err = output.Write(blockType)
+	}
+	if err == nil {
+		switch b.blockType {
+		case blockTypeDirectory, blockTypeStartOfFile:
+			err = binary.Write(output, binary.BigEndian, uint32(b.uid))
+			if err == nil {
+				err = binary.Write(output, binary.BigEndian, uint32(b.gid))
+			}
+			if err == nil {
+				err = binary.Write(output, binary.BigEndian, b.mode)
+			}
+		case blockTypeEndOfFile:
+			// Nothing to write aside from the block type
+		case blockTypeData:
+			err = binary.Write(output, binary.BigEndian, uint16(b.numBytes))
+			if err == nil {
+				_, err = output.Write(b.buffer[:b.numBytes])
+			}
+		default:
+			logger.Panicln("Unexpected block type")
+		}
+	}
+	return err
+}
+
 func archiveWriter(output io.Writer, blockQueue <-chan block) {
 	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
 	output = io.MultiWriter(output, hash)
 	blockCount := 0
-	blockType := make([]byte, 1)
 
 	_, err := output.Write(fastArchiverHeader)
 	if err != nil {
@@ -148,40 +183,11 @@ func archiveWriter(output io.Writer, blockQueue <-chan block) {
 	}
 
 	for block := range blockQueue {
-		filePath := []byte(block.filePath)
-		err = binary.Write(output, binary.BigEndian, uint16(len(filePath)))
-		if err == nil {
-			_, err = output.Write(filePath)
-		}
-		if err == nil {
-			blockType[0] = byte(block.blockType)
-			_, err = output.Write(blockType)
-		}
-		if err == nil {
-			switch block.blockType {
-			case blockTypeDirectory, blockTypeStartOfFile:
-				err = binary.Write(output, binary.BigEndian, uint32(block.uid))
-				if err == nil {
-					err = binary.Write(output, binary.BigEndian, uint32(block.gid))
-				}
-				if err == nil {
-					err = binary.Write(output, binary.BigEndian, block.mode)
-				}
-			case blockTypeEndOfFile:
-				// Nothing to write aside from the block type
-			case blockTypeData:
-				err = binary.Write(output, binary.BigEndian, uint16(block.numBytes))
-				if err == nil {
-					_, err = output.Write(block.buffer[:block.numBytes])
-				}
-			default:
-				logger.Panicln("Unexpected block type")
-			}
-		}
+		err = block.writeBlock(output)
 
 		blockCount += 1
 		if err == nil && (blockCount % 1000) == 0 {
-			err = writeChecksumBlock(hash, output, blockType)
+			err = writeChecksumBlock(hash, output)
 		}
 
 		if err != nil {
@@ -189,17 +195,17 @@ func archiveWriter(output io.Writer, blockQueue <-chan block) {
 		}
 	}
 
-	err = writeChecksumBlock(hash, output, blockType)
+	err = writeChecksumBlock(hash, output)
 	if err != nil {
 		logger.Fatalln("Archive write error:", err.Error())
 	}
 }
 
-func writeChecksumBlock(hash hash.Hash64, output io.Writer, blockType []byte) (error) {
+func writeChecksumBlock(hash hash.Hash64, output io.Writer) (error) {
 	// file path length... zero
 	err := binary.Write(output, binary.BigEndian, uint16(0))
 	if err == nil {
-		blockType[0] = byte(blockTypeChecksum)
+		blockType := []byte{byte(blockTypeChecksum)}
 		_, err = output.Write(blockType)
 	}
 	if err == nil {
