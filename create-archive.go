@@ -136,7 +136,7 @@ func fileReader(fileReadQueue <-chan string, blockQueue chan block, workInProgre
 	}
 }
 
-func (b *block) writeBlock(output io.Writer) (error) {
+func (b *block) writeBlock(output io.Writer) error {
 	filePath := []byte(b.filePath)
 	err := binary.Write(output, binary.BigEndian, uint16(len(filePath)))
 	if err == nil {
@@ -184,7 +184,7 @@ func archiveWriter(output io.Writer, blockQueue <-chan block) {
 		err = block.writeBlock(output)
 
 		blockCount += 1
-		if err == nil && (blockCount % 1000) == 0 {
+		if err == nil && (blockCount%1000) == 0 {
 			err = writeChecksumBlock(hash, output)
 		}
 
@@ -199,7 +199,7 @@ func archiveWriter(output io.Writer, blockQueue <-chan block) {
 	}
 }
 
-func writeChecksumBlock(hash hash.Hash64, output io.Writer) (error) {
+func writeChecksumBlock(hash hash.Hash64, output io.Writer) error {
 	// file path length... zero
 	err := binary.Write(output, binary.BigEndian, uint16(0))
 	if err == nil {
