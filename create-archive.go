@@ -144,8 +144,6 @@ func (b *block) writeBlock(output io.Writer) (error) {
 	}
 	if err == nil {
 		blockType := []byte{byte(b.blockType)}
-	//blockType := make([]byte, 1)
-		//blockType[0] = byte(b.blockType)
 		_, err = output.Write(blockType)
 	}
 	if err == nil {
