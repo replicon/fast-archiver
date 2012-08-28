@@ -8,12 +8,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 )
 
 func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string, blockQueue chan block, excludePatterns []string, workInProgress *sync.WaitGroup) {
 	for directoryPath := range directoryScanQueue {
+		if strings.HasPrefix(directoryPath, "/") {
+			logger.Fatalln("unable to create archive with absolute path reference:", directoryPath)
+		}
 		if verbose {
 			logger.Println(directoryPath)
 		}
