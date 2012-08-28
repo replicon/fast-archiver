@@ -8,9 +8,8 @@ import (
 	"log"
 	"math"
 	"os"
-	"path/filepath"
 	"runtime"
-	"sync"
+	"path/filepath"
 )
 
 var logger *log.Logger
@@ -72,12 +71,6 @@ func main() {
 			logger.Fatalln("Directories to archive must be specified")
 		}
 
-		var directoryScanQueue = make(chan string, *directoryScanQueueSize)
-		var fileReadQueue = make(chan string, *fileReadQueueSize)
-		var blockQueue = make(chan falib.Block, *blockQueueSize)
-		var workInProgress sync.WaitGroup
-		var excludes = filepath.SplitList(*exclude)
-
 		var outputFile *os.File
 		if *outputFileName != "" {
 			file, err := os.Create(*outputFileName)
@@ -89,28 +82,17 @@ func main() {
 			outputFile = os.Stdout
 		}
 
-		bufferedOutputFile := bufio.NewWriter(outputFile)
-		for i := 0; i < *dirReaderCount; i++ {
-			go falib.DirectoryScanner(directoryScanQueue, fileReadQueue, blockQueue, excludes, &workInProgress)
-		}
-		for i := 0; i < *fileReaderCount; i++ {
-			go falib.FileReader(fileReadQueue, blockQueue, &workInProgress)
-		}
-
+		var archiver = falib.NewArchiver(outputFile)
+		archiver.DirScanQueueSize = *directoryScanQueueSize
+		archiver.FileReadQueueSize = *fileReadQueueSize
+		archiver.BlockQueueSize = *blockQueueSize
+		archiver.ExcludePatterns = filepath.SplitList(*exclude)
+		archiver.DirReaderCount = *dirReaderCount
+		archiver.FileReaderCount = *fileReaderCount
 		for i := 0; i < flag.NArg(); i++ {
-			workInProgress.Add(1)
-			directoryScanQueue <- flag.Arg(i)
+			archiver.AddDir(flag.Arg(i))
 		}
-
-		go func() {
-			workInProgress.Wait()
-			close(directoryScanQueue)
-			close(fileReadQueue)
-			close(blockQueue)
-		}()
-
-		falib.ArchiveWriter(bufferedOutputFile, blockQueue)
-		bufferedOutputFile.Flush()
+		archiver.Run()
 		outputFile.Close()
 	} else {
 		logger.Fatalln("extract (-x) or create (-c) flag must be provided")

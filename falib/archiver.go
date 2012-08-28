@@ -13,8 +13,68 @@ import (
 	"syscall"
 )
 
-func DirectoryScanner(directoryScanQueue chan string, fileReadQueue chan string, blockQueue chan Block, excludePatterns []string, workInProgress *sync.WaitGroup) {
-	for directoryPath := range directoryScanQueue {
+type Archiver struct {
+	directoryScanQueue chan string
+	fileReadQueue      chan string
+	blockQueue         chan Block
+	workInProgress     sync.WaitGroup
+	excludePatterns    []string
+	output             *bufio.Writer
+	DirReaderCount     int
+	FileReaderCount    int
+	DirScanQueueSize   int
+	FileReadQueueSize  int
+	BlockQueueSize     int
+	ExcludePatterns    []string
+}
+
+func NewArchiver(output io.Writer) *Archiver {
+	retval := &Archiver{}
+	retval.ExcludePatterns = []string{}
+	retval.output = bufio.NewWriter(output)
+	retval.DirReaderCount = 16
+	retval.FileReaderCount = 16
+	retval.DirScanQueueSize = 128
+	retval.FileReadQueueSize = 128
+	retval.BlockQueueSize = 128
+	return retval
+}
+
+func (a *Archiver) AddDir(directoryPath string) {
+	if a.directoryScanQueue == nil {
+		a.directoryScanQueue = make(chan string, a.DirScanQueueSize)
+	}
+	a.workInProgress.Add(1)
+	a.directoryScanQueue <- directoryPath
+}
+
+func (a *Archiver) Run() {
+	if a.directoryScanQueue == nil {
+		a.directoryScanQueue = make(chan string, a.DirScanQueueSize)
+	}
+	a.fileReadQueue = make(chan string, a.FileReadQueueSize)
+	a.blockQueue = make(chan Block, a.BlockQueueSize)
+
+	for i := 0; i < a.DirReaderCount; i++ {
+		go a.directoryScanner()
+	}
+	for i := 0; i < a.FileReaderCount; i++ {
+		go a.fileReader()
+	}
+
+	go func() {
+		a.workInProgress.Wait()
+		close(a.directoryScanQueue)
+		close(a.fileReadQueue)
+		close(a.blockQueue)
+	}()
+
+	a.archiveWriter()
+	a.output.Flush()
+}
+
+func (a *Archiver) directoryScanner() {
+	for directoryPath := range a.directoryScanQueue {
 		if strings.HasPrefix(directoryPath, "/") {
 			Logger.Fatalln("unable to create archive with absolute path reference:", directoryPath)
 		}
@@ -25,18 +85,18 @@ func DirectoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 		directory, err := os.Open(directoryPath)
 		if err != nil {
 			Logger.Println("directory read error:", err.Error())
-			workInProgress.Done()
+			a.workInProgress.Done()
 			continue
 		}
 
 		uid, gid, mode := getModeOwnership(directory)
-		blockQueue <- Block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
+		a.blockQueue <- Block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
 
 		for fileName := range readdirnames(directory) {
 			filePath := filepath.Join(directoryPath, fileName)
 
 			excludeFile := false
-			for _, excludePattern := range excludePatterns {
+			for _, excludePattern := range a.excludePatterns {
 				match, err := filepath.Match(excludePattern, filePath)
 				if err == nil && match {
 					excludeFile = true
@@ -57,7 +117,7 @@ func DirectoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 				continue
 			}
 
-			workInProgress.Add(1)
+			a.workInProgress.Add(1)
 			if fileInfo.IsDir() {
 				// Sending to directoryScanQueue can block if it's full; since
 				// we're also the goroutine responsible for reading from it,
@@ -67,15 +127,15 @@ func DirectoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 				// directoryScanQueue's max size is pretty much ineffective...
 				// but that's better than a deadlock.
 				go func(filePath string) {
-					directoryScanQueue <- filePath
+					a.directoryScanQueue <- filePath
 				}(filePath)
 			} else {
-				fileReadQueue <- filePath
+				a.fileReadQueue <- filePath
 			}
 		}
 
 		directory.Close()
-		workInProgress.Done()
+		a.workInProgress.Done()
 	}
 }
 
@@ -99,8 +159,8 @@ func getModeOwnership(file *os.File) (int, int, os.FileMode) {
 	return uid, gid, mode
 }
 
-func FileReader(fileReadQueue <-chan string, blockQueue chan Block, workInProgress *sync.WaitGroup) {
-	for filePath := range fileReadQueue {
+func (a *Archiver) fileReader() {
+	for filePath := range a.fileReadQueue {
 		if Verbose {
 			Logger.Println(filePath)
 		}
@@ -109,7 +169,7 @@ func FileReader(fileReadQueue <-chan string, blockQueue chan Block, workInProgre
 		if err == nil {
 
 			uid, gid, mode := getModeOwnership(file)
-			blockQueue <- Block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
+			a.blockQueue <- Block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
 
 			bufferedFile := bufio.NewReader(file)
 
@@ -123,16 +183,16 @@ func FileReader(fileReadQueue <-chan string, blockQueue chan Block, workInProgre
 					break
 				}
 
-				blockQueue <- Block{filePath, uint16(bytesRead), buffer, blockTypeData, 0, 0, 0}
+				a.blockQueue <- Block{filePath, uint16(bytesRead), buffer, blockTypeData, 0, 0, 0}
 			}
 
-			blockQueue <- Block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
+			a.blockQueue <- Block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
 			file.Close()
 		} else {
 			Logger.Println("file open error:", err.Error())
 		}
 
-		workInProgress.Done()
+		a.workInProgress.Done()
 	}
 }
 
@@ -170,9 +230,9 @@ func (b *Block) writeBlock(output io.Writer) error {
 	return err
 }
 
-func ArchiveWriter(output io.Writer, blockQueue <-chan Block) {
+func (a *Archiver) archiveWriter() {
 	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
-	output = io.MultiWriter(output, hash)
+	output := io.MultiWriter(a.output, hash)
 	blockCount := 0
 
 	_, err := output.Write(fastArchiverHeader)
@@ -180,7 +240,7 @@ func ArchiveWriter(output io.Writer, blockQueue <-chan Block) {
 		Logger.Fatalln("Archive write error:", err.Error())
 	}
 
-	for block := range blockQueue {
+	for block := range a.blockQueue {
 		err = block.writeBlock(output)
 
 		blockCount += 1
