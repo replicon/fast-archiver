@@ -1,4 +1,4 @@
-package main
+package falib
 
 import (
 	"bufio"
@@ -13,24 +13,24 @@ import (
 	"syscall"
 )
 
-func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string, blockQueue chan block, excludePatterns []string, workInProgress *sync.WaitGroup) {
+func DirectoryScanner(directoryScanQueue chan string, fileReadQueue chan string, blockQueue chan Block, excludePatterns []string, workInProgress *sync.WaitGroup) {
 	for directoryPath := range directoryScanQueue {
 		if strings.HasPrefix(directoryPath, "/") {
-			logger.Fatalln("unable to create archive with absolute path reference:", directoryPath)
+			Logger.Fatalln("unable to create archive with absolute path reference:", directoryPath)
 		}
-		if verbose {
-			logger.Println(directoryPath)
+		if Verbose {
+			Logger.Println(directoryPath)
 		}
 
 		directory, err := os.Open(directoryPath)
 		if err != nil {
-			logger.Println("directory read error:", err.Error())
+			Logger.Println("directory read error:", err.Error())
 			workInProgress.Done()
 			continue
 		}
 
 		uid, gid, mode := getModeOwnership(directory)
-		blockQueue <- block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
+		blockQueue <- Block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
 
 		for fileName := range readdirnames(directory) {
 			filePath := filepath.Join(directoryPath, fileName)
@@ -44,16 +44,16 @@ func directoryScanner(directoryScanQueue chan string, fileReadQueue chan string,
 				}
 			}
 			if excludeFile {
-				logger.Println("skipping excluded file", filePath)
+				Logger.Println("skipping excluded file", filePath)
 				continue
 			}
 
 			fileInfo, err := os.Lstat(filePath)
 			if err != nil {
-				logger.Println("unable to lstat file", err.Error())
+				Logger.Println("unable to lstat file", err.Error())
 				continue
 			} else if (fileInfo.Mode() & os.ModeSymlink) != 0 {
-				logger.Println("skipping symbolic link", filePath)
+				Logger.Println("skipping symbolic link", filePath)
 				continue
 			}
 
@@ -85,7 +85,7 @@ func getModeOwnership(file *os.File) (int, int, os.FileMode) {
 	var mode os.FileMode = 0
 	fi, err := file.Stat()
 	if err != nil {
-		logger.Println("file stat error; uid/gid/mode will be incorrect:", err.Error())
+		Logger.Println("file stat error; uid/gid/mode will be incorrect:", err.Error())
 	} else {
 		mode = fi.Mode()
 		stat_t := fi.Sys().(*syscall.Stat_t)
@@ -93,50 +93,50 @@ func getModeOwnership(file *os.File) (int, int, os.FileMode) {
 			uid = int(stat_t.Uid)
 			gid = int(stat_t.Gid)
 		} else {
-			logger.Println("unable to find file uid/gid")
+			Logger.Println("unable to find file uid/gid")
 		}
 	}
 	return uid, gid, mode
 }
 
-func fileReader(fileReadQueue <-chan string, blockQueue chan block, workInProgress *sync.WaitGroup) {
+func FileReader(fileReadQueue <-chan string, blockQueue chan Block, workInProgress *sync.WaitGroup) {
 	for filePath := range fileReadQueue {
-		if verbose {
-			logger.Println(filePath)
+		if Verbose {
+			Logger.Println(filePath)
 		}
 
 		file, err := os.Open(filePath)
 		if err == nil {
 
 			uid, gid, mode := getModeOwnership(file)
-			blockQueue <- block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
+			blockQueue <- Block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
 
 			bufferedFile := bufio.NewReader(file)
 
 			for {
-				buffer := make([]byte, blockSize)
+				buffer := make([]byte, BlockSize)
 				bytesRead, err := bufferedFile.Read(buffer)
 				if err == io.EOF {
 					break
 				} else if err != nil {
-					logger.Println("file read error; file contents will be incomplete:", err.Error())
+					Logger.Println("file read error; file contents will be incomplete:", err.Error())
 					break
 				}
 
-				blockQueue <- block{filePath, uint16(bytesRead), buffer, blockTypeData, 0, 0, 0}
+				blockQueue <- Block{filePath, uint16(bytesRead), buffer, blockTypeData, 0, 0, 0}
 			}
 
-			blockQueue <- block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
+			blockQueue <- Block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
 			file.Close()
 		} else {
-			logger.Println("file open error:", err.Error())
+			Logger.Println("file open error:", err.Error())
 		}
 
 		workInProgress.Done()
 	}
 }
 
-func (b *block) writeBlock(output io.Writer) error {
+func (b *Block) writeBlock(output io.Writer) error {
 	filePath := []byte(b.filePath)
 	err := binary.Write(output, binary.BigEndian, uint16(len(filePath)))
 	if err == nil {
@@ -164,20 +164,20 @@ func (b *block) writeBlock(output io.Writer) error {
 				_, err = output.Write(b.buffer[:b.numBytes])
 			}
 		default:
-			logger.Panicln("Unexpected block type")
+			Logger.Panicln("Unexpected block type")
 		}
 	}
 	return err
 }
 
-func archiveWriter(output io.Writer, blockQueue <-chan block) {
+func ArchiveWriter(output io.Writer, blockQueue <-chan Block) {
 	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
 	output = io.MultiWriter(output, hash)
 	blockCount := 0
 
 	_, err := output.Write(fastArchiverHeader)
 	if err != nil {
-		logger.Fatalln("Archive write error:", err.Error())
+		Logger.Fatalln("Archive write error:", err.Error())
 	}
 
 	for block := range blockQueue {
@@ -189,13 +189,13 @@ func archiveWriter(output io.Writer, blockQueue <-chan block) {
 		}
 
 		if err != nil {
-			logger.Fatalln("Archive write error:", err.Error())
+			Logger.Fatalln("Archive write error:", err.Error())
 		}
 	}
 
 	err = writeChecksumBlock(hash, output)
 	if err != nil {
-		logger.Fatalln("Archive write error:", err.Error())
+		Logger.Fatalln("Archive write error:", err.Error())
 	}
 }
 
@@ -221,7 +221,7 @@ func readdirnames(dir *os.File) chan string {
 			if err == io.EOF {
 				break
 			} else if err != nil {
-				logger.Println("error reading directory:", err.Error())
+				Logger.Println("error reading directory:", err.Error())
 			}
 			for _, name := range names {
 				retval <- name

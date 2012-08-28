@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"github.com/replicon/fast-archiver/falib"
 	"log"
 	"math"
 	"os"
@@ -12,35 +13,7 @@ import (
 	"sync"
 )
 
-type blockType byte
-
-const (
-	blockTypeData blockType = iota
-	blockTypeStartOfFile
-	blockTypeEndOfFile
-	blockTypeDirectory
-	blockTypeChecksum
-)
-
-// Archive header: stole ideas from the PNG file header here, but replaced
-// 'PNG' with 'FA1' to identify the fast-archive format (version 1).
-var fastArchiverHeader = []byte{0x89, 0x46, 0x41, 0x31, 0x0D, 0x0A, 0x1A, 0x0A}
-
-type block struct {
-	filePath  string
-	numBytes  uint16
-	buffer    []byte
-	blockType blockType
-	uid       int
-	gid       int
-	mode      os.FileMode
-}
-
-var blockSize uint16
-var verbose bool
 var logger *log.Logger
-var ignorePerms bool
-var ignoreOwners bool
 var tag string
 var rev string
 
@@ -63,19 +36,20 @@ func main() {
 	blockQueueSize := flag.Int("queue-write", 128, "queue size for archive write (-c only); increasing can cause increased memory usage")
 	multiCpu := flag.Int("multicpu", 1, "maximum number of CPUs that can be executing simultaneously")
 	exclude := flag.String("exclude", "", "file patterns to exclude (eg. core.*); can be path list separated (eg. : in Linux) for multiple excludes (-c only)")
-	flag.BoolVar(&verbose, "v", false, "verbose output on stderr")
-	flag.BoolVar(&ignorePerms, "ignore-perms", false, "ignore permissions when restoring files (-x only)")
-	flag.BoolVar(&ignoreOwners, "ignore-owners", false, "ignore owners when restoring files (-x only)")
+	flag.BoolVar(&falib.Verbose, "v", false, "verbose output on stderr")
+	flag.BoolVar(&falib.IgnorePerms, "ignore-perms", false, "ignore permissions when restoring files (-x only)")
+	flag.BoolVar(&falib.IgnoreOwners, "ignore-owners", false, "ignore owners when restoring files (-x only)")
 	flag.Parse()
 
 	runtime.GOMAXPROCS(*multiCpu)
 
-	logger = log.New(os.Stderr, "", 0)
+	logger := log.New(os.Stderr, "", 0)
+	falib.Logger = logger
 
 	if *requestedBlockSize > math.MaxUint16 {
 		logger.Fatalln("block-size must be less than or equal to", math.MaxUint16)
 	}
-	blockSize = uint16(*requestedBlockSize)
+	falib.BlockSize = uint16(*requestedBlockSize)
 
 	if *extract {
 		var inputFile *os.File
@@ -90,7 +64,7 @@ func main() {
 		}
 
 		bufferedInputFile := bufio.NewReader(inputFile)
-		archiveReader(bufferedInputFile)
+		falib.ArchiveReader(bufferedInputFile)
 		inputFile.Close()
 
 	} else if *create {
@@ -100,7 +74,7 @@ func main() {
 
 		var directoryScanQueue = make(chan string, *directoryScanQueueSize)
 		var fileReadQueue = make(chan string, *fileReadQueueSize)
-		var blockQueue = make(chan block, *blockQueueSize)
+		var blockQueue = make(chan falib.Block, *blockQueueSize)
 		var workInProgress sync.WaitGroup
 		var excludes = filepath.SplitList(*exclude)
 
@@ -117,10 +91,10 @@ func main() {
 
 		bufferedOutputFile := bufio.NewWriter(outputFile)
 		for i := 0; i < *dirReaderCount; i++ {
-			go directoryScanner(directoryScanQueue, fileReadQueue, blockQueue, excludes, &workInProgress)
+			go falib.DirectoryScanner(directoryScanQueue, fileReadQueue, blockQueue, excludes, &workInProgress)
 		}
 		for i := 0; i < *fileReaderCount; i++ {
-			go fileReader(fileReadQueue, blockQueue, &workInProgress)
+			go falib.FileReader(fileReadQueue, blockQueue, &workInProgress)
 		}
 
 		for i := 0; i < flag.NArg(); i++ {
@@ -135,7 +109,7 @@ func main() {
 			close(blockQueue)
 		}()
 
-		archiveWriter(bufferedOutputFile, blockQueue)
+		falib.ArchiveWriter(bufferedOutputFile, blockQueue)
 		bufferedOutputFile.Flush()
 		outputFile.Close()
 	} else {
