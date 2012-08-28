@@ -8,6 +8,7 @@ import (
 	"hash/crc64"
 	"io"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -55,6 +56,9 @@ func archiveReader(file io.Reader) {
 			logger.Fatalln("Archive read error:", err.Error())
 		}
 		filePath := string(buf)
+		if strings.HasPrefix(filePath, "/") {
+			logger.Fatalln("unable to extract archive with absolute path reference:", filePath)
+		}
 
 		blockType := make([]byte, 1)
 		_, err = io.ReadFull(file, blockType)
