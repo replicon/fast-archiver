@@ -3,6 +3,7 @@ package falib
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"hash"
 	"hash/crc64"
 	"io"
@@ -12,6 +13,16 @@ import (
 	"sync"
 	"syscall"
 )
+
+var (
+	ErrAbsoluteDirectoryPath = errors.New("unable to process archive with absolute path reference")
+)
+
+// Will rename to "Logger" when Logger global var is removed
+type MultiLevelLogger interface {
+	Verbose(v ...interface{})
+	Warning(v ...interface{})
+}
 
 type Archiver struct {
 	directoryScanQueue chan string
@@ -26,6 +37,8 @@ type Archiver struct {
 	FileReadQueueSize  int
 	BlockQueueSize     int
 	ExcludePatterns    []string
+	Logger             MultiLevelLogger
+	error              error
 }
 
 func NewArchiver(output io.Writer) *Archiver {
@@ -48,12 +61,13 @@ func (a *Archiver) AddDir(directoryPath string) {
 	a.directoryScanQueue <- directoryPath
 }
 
-func (a *Archiver) Run() {
+func (a *Archiver) Run() error {
 	if a.directoryScanQueue == nil {
 		a.directoryScanQueue = make(chan string, a.DirScanQueueSize)
 	}
 	a.fileReadQueue = make(chan string, a.FileReadQueueSize)
 	a.blockQueue = make(chan Block, a.BlockQueueSize)
+	a.error = nil
 
 	for i := 0; i < a.DirReaderCount; i++ {
 		go a.directoryScanner()
@@ -69,30 +83,37 @@ func (a *Archiver) Run() {
 		close(a.blockQueue)
 	}()
 
-	a.archiveWriter()
+	err := a.archiveWriter()
 	a.output.Flush()
+
+	if err != nil {
+		return err
+	}
+	return a.error
 }
 
 func (a *Archiver) directoryScanner() {
 	for directoryPath := range a.directoryScanQueue {
 		if strings.HasPrefix(directoryPath, "/") {
-			Logger.Fatalln("unable to create archive with absolute path reference:", directoryPath)
+			a.error = ErrAbsoluteDirectoryPath
+			a.workInProgress.Done()
+			continue
 		}
 		if Verbose {
-			Logger.Println(directoryPath)
+			a.Logger.Verbose(directoryPath)
 		}
 
 		directory, err := os.Open(directoryPath)
 		if err != nil {
-			Logger.Println("directory read error:", err.Error())
+			a.Logger.Warning("directory read error:", err.Error())
 			a.workInProgress.Done()
 			continue
 		}
 
-		uid, gid, mode := getModeOwnership(directory)
+		uid, gid, mode := a.getModeOwnership(directory)
 		a.blockQueue <- Block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
 
-		for fileName := range readdirnames(directory) {
+		for fileName := range a.readdirnames(directory) {
 			filePath := filepath.Join(directoryPath, fileName)
 
 			excludeFile := false
@@ -104,16 +125,16 @@ func (a *Archiver) directoryScanner() {
 				}
 			}
 			if excludeFile {
-				Logger.Println("skipping excluded file", filePath)
+				a.Logger.Verbose("skipping excluded file", filePath)
 				continue
 			}
 
 			fileInfo, err := os.Lstat(filePath)
 			if err != nil {
-				Logger.Println("unable to lstat file", err.Error())
+				a.Logger.Warning("unable to lstat file", err.Error())
 				continue
 			} else if (fileInfo.Mode() & os.ModeSymlink) != 0 {
-				Logger.Println("skipping symbolic link", filePath)
+				a.Logger.Warning("skipping symbolic link", filePath)
 				continue
 			}
 
@@ -139,13 +160,13 @@ func (a *Archiver) directoryScanner() {
 	}
 }
 
-func getModeOwnership(file *os.File) (int, int, os.FileMode) {
+func (a *Archiver) getModeOwnership(file *os.File) (int, int, os.FileMode) {
 	var uid int = 0
 	var gid int = 0
 	var mode os.FileMode = 0
 	fi, err := file.Stat()
 	if err != nil {
-		Logger.Println("file stat error; uid/gid/mode will be incorrect:", err.Error())
+		a.Logger.Warning("file stat error; uid/gid/mode will be incorrect:", err.Error())
 	} else {
 		mode = fi.Mode()
 		stat_t := fi.Sys().(*syscall.Stat_t)
@@ -153,7 +174,7 @@ func getModeOwnership(file *os.File) (int, int, os.FileMode) {
 			uid = int(stat_t.Uid)
 			gid = int(stat_t.Gid)
 		} else {
-			Logger.Println("unable to find file uid/gid")
+			a.Logger.Warning("unable to find file uid/gid")
 		}
 	}
 	return uid, gid, mode
@@ -162,13 +183,13 @@ func getModeOwnership(file *os.File) (int, int, os.FileMode) {
 func (a *Archiver) fileReader() {
 	for filePath := range a.fileReadQueue {
 		if Verbose {
-			Logger.Println(filePath)
+			a.Logger.Warning(filePath)
 		}
 
 		file, err := os.Open(filePath)
 		if err == nil {
 
-			uid, gid, mode := getModeOwnership(file)
+			uid, gid, mode := a.getModeOwnership(file)
 			a.blockQueue <- Block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
 
 			bufferedFile := bufio.NewReader(file)
@@ -179,7 +200,7 @@ func (a *Archiver) fileReader() {
 				if err == io.EOF {
 					break
 				} else if err != nil {
-					Logger.Println("file read error; file contents will be incomplete:", err.Error())
+					a.Logger.Warning("file read error; file contents will be incomplete:", err.Error())
 					break
 				}
 
@@ -189,7 +210,7 @@ func (a *Archiver) fileReader() {
 			a.blockQueue <- Block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
 			file.Close()
 		} else {
-			Logger.Println("file open error:", err.Error())
+			a.Logger.Warning("file open error:", err.Error())
 		}
 
 		a.workInProgress.Done()
@@ -224,20 +245,20 @@ func (b *Block) writeBlock(output io.Writer) error {
 				_, err = output.Write(b.buffer[:b.numBytes])
 			}
 		default:
-			Logger.Panicln("Unexpected block type")
+			panic("Internal error: unexpected block type")
 		}
 	}
 	return err
 }
 
-func (a *Archiver) archiveWriter() {
+func (a *Archiver) archiveWriter() error {
 	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
 	output := io.MultiWriter(a.output, hash)
 	blockCount := 0
 
 	_, err := output.Write(fastArchiverHeader)
 	if err != nil {
-		Logger.Fatalln("Archive write error:", err.Error())
+		return err
 	}
 
 	for block := range a.blockQueue {
@@ -249,14 +270,11 @@ func (a *Archiver) archiveWriter() {
 		}
 
 		if err != nil {
-			Logger.Fatalln("Archive write error:", err.Error())
+			return err
 		}
 	}
 
-	err = writeChecksumBlock(hash, output)
-	if err != nil {
-		Logger.Fatalln("Archive write error:", err.Error())
-	}
+	return writeChecksumBlock(hash, output)
 }
 
 func writeChecksumBlock(hash hash.Hash64, output io.Writer) error {
@@ -273,7 +291,7 @@ func writeChecksumBlock(hash hash.Hash64, output io.Writer) error {
 }
 
 // Wrapper for Readdirnames that converts it into a generator-style method.
-func readdirnames(dir *os.File) chan string {
+func (a *Archiver) readdirnames(dir *os.File) chan string {
 	retval := make(chan string, 256)
 	go func(dir *os.File) {
 		for {
@@ -281,7 +299,7 @@ func readdirnames(dir *os.File) chan string {
 			if err == io.EOF {
 				break
 			} else if err != nil {
-				Logger.Println("error reading directory:", err.Error())
+				a.Logger.Warning("error reading directory:", err.Error())
 			}
 			for _, name := range names {
 				retval <- name

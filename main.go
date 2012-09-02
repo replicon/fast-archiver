@@ -16,6 +16,19 @@ var logger *log.Logger
 var tag string
 var rev string
 
+type MultiLevelLogger struct {
+	logger  *log.Logger
+	verbose bool
+}
+func (l *MultiLevelLogger) Verbose(v ...interface{}) {
+	if l.verbose {
+		l.logger.Println(v...)
+	}
+}
+func (l *MultiLevelLogger) Warning(v ...interface{}) {
+	l.logger.Println(v...)
+}
+
 func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "%s (tag: %s, rev: %s)\n", os.Args[0], tag, rev)
@@ -35,7 +48,7 @@ func main() {
 	blockQueueSize := flag.Int("queue-write", 128, "queue size for archive write (-c only); increasing can cause increased memory usage")
 	multiCpu := flag.Int("multicpu", 1, "maximum number of CPUs that can be executing simultaneously")
 	exclude := flag.String("exclude", "", "file patterns to exclude (eg. core.*); can be path list separated (eg. : in Linux) for multiple excludes (-c only)")
-	flag.BoolVar(&falib.Verbose, "v", false, "verbose output on stderr")
+	verbose := flag.Bool("v", false, "verbose output on stderr")
 	flag.BoolVar(&falib.IgnorePerms, "ignore-perms", false, "ignore permissions when restoring files (-x only)")
 	flag.BoolVar(&falib.IgnoreOwners, "ignore-owners", false, "ignore owners when restoring files (-x only)")
 	flag.Parse()
@@ -43,6 +56,7 @@ func main() {
 	runtime.GOMAXPROCS(*multiCpu)
 
 	logger := log.New(os.Stderr, "", 0)
+	falib.Verbose = *verbose
 	falib.Logger = logger
 
 	if *requestedBlockSize > math.MaxUint16 {
@@ -89,10 +103,14 @@ func main() {
 		archiver.ExcludePatterns = filepath.SplitList(*exclude)
 		archiver.DirReaderCount = *dirReaderCount
 		archiver.FileReaderCount = *fileReaderCount
+		archiver.Logger = &MultiLevelLogger{logger, *verbose}
 		for i := 0; i < flag.NArg(); i++ {
 			archiver.AddDir(flag.Arg(i))
 		}
-		archiver.Run()
+		err := archiver.Run()
+		if err != nil {
+			logger.Fatalln("Fatal error in archiver:", err.Error())
+		}
 		outputFile.Close()
 	} else {
 		logger.Fatalln("extract (-x) or create (-c) flag must be provided")
