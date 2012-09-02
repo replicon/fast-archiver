@@ -3,7 +3,6 @@ package falib
 import (
 	"bufio"
 	"encoding/binary"
-	"errors"
 	"hash"
 	"hash/crc64"
 	"io"
@@ -14,20 +13,10 @@ import (
 	"syscall"
 )
 
-var (
-	ErrAbsoluteDirectoryPath = errors.New("unable to process archive with absolute path reference")
-)
-
-// Will rename to "Logger" when Logger global var is removed
-type MultiLevelLogger interface {
-	Verbose(v ...interface{})
-	Warning(v ...interface{})
-}
-
 type Archiver struct {
 	directoryScanQueue chan string
 	fileReadQueue      chan string
-	blockQueue         chan Block
+	blockQueue         chan block
 	workInProgress     sync.WaitGroup
 	excludePatterns    []string
 	output             *bufio.Writer
@@ -37,7 +26,8 @@ type Archiver struct {
 	FileReadQueueSize  int
 	BlockQueueSize     int
 	ExcludePatterns    []string
-	Logger             MultiLevelLogger
+	Logger             Logger
+	BlockSize          uint16
 	error              error
 }
 
@@ -50,6 +40,7 @@ func NewArchiver(output io.Writer) *Archiver {
 	retval.DirScanQueueSize = 128
 	retval.FileReadQueueSize = 128
 	retval.BlockQueueSize = 128
+	retval.BlockSize = 4096
 	return retval
 }
 
@@ -66,7 +57,7 @@ func (a *Archiver) Run() error {
 		a.directoryScanQueue = make(chan string, a.DirScanQueueSize)
 	}
 	a.fileReadQueue = make(chan string, a.FileReadQueueSize)
-	a.blockQueue = make(chan Block, a.BlockQueueSize)
+	a.blockQueue = make(chan block, a.BlockQueueSize)
 	a.error = nil
 
 	for i := 0; i < a.DirReaderCount; i++ {
@@ -99,9 +90,7 @@ func (a *Archiver) directoryScanner() {
 			a.workInProgress.Done()
 			continue
 		}
-		if Verbose {
-			a.Logger.Verbose(directoryPath)
-		}
+		a.Logger.Verbose(directoryPath)
 
 		directory, err := os.Open(directoryPath)
 		if err != nil {
@@ -111,7 +100,7 @@ func (a *Archiver) directoryScanner() {
 		}
 
 		uid, gid, mode := a.getModeOwnership(directory)
-		a.blockQueue <- Block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
+		a.blockQueue <- block{directoryPath, 0, nil, blockTypeDirectory, uid, gid, mode}
 
 		for fileName := range a.readdirnames(directory) {
 			filePath := filepath.Join(directoryPath, fileName)
@@ -182,20 +171,18 @@ func (a *Archiver) getModeOwnership(file *os.File) (int, int, os.FileMode) {
 
 func (a *Archiver) fileReader() {
 	for filePath := range a.fileReadQueue {
-		if Verbose {
-			a.Logger.Warning(filePath)
-		}
+		a.Logger.Verbose(filePath)
 
 		file, err := os.Open(filePath)
 		if err == nil {
 
 			uid, gid, mode := a.getModeOwnership(file)
-			a.blockQueue <- Block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
+			a.blockQueue <- block{filePath, 0, nil, blockTypeStartOfFile, uid, gid, mode}
 
 			bufferedFile := bufio.NewReader(file)
 
 			for {
-				buffer := make([]byte, BlockSize)
+				buffer := make([]byte, a.BlockSize)
 				bytesRead, err := bufferedFile.Read(buffer)
 				if err == io.EOF {
 					break
@@ -204,10 +191,10 @@ func (a *Archiver) fileReader() {
 					break
 				}
 
-				a.blockQueue <- Block{filePath, uint16(bytesRead), buffer, blockTypeData, 0, 0, 0}
+				a.blockQueue <- block{filePath, uint16(bytesRead), buffer, blockTypeData, 0, 0, 0}
 			}
 
-			a.blockQueue <- Block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
+			a.blockQueue <- block{filePath, 0, nil, blockTypeEndOfFile, 0, 0, 0}
 			file.Close()
 		} else {
 			a.Logger.Warning("file open error:", err.Error())
@@ -217,7 +204,7 @@ func (a *Archiver) fileReader() {
 	}
 }
 
-func (b *Block) writeBlock(output io.Writer) error {
+func (b *block) writeBlock(output io.Writer) error {
 	filePath := []byte(b.filePath)
 	err := binary.Write(output, binary.BigEndian, uint16(len(filePath)))
 	if err == nil {

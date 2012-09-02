@@ -1,9 +1,6 @@
 package falib
 
-import (
-	"log"
-	"os"
-)
+import "os"
 
 type blockType byte
 
@@ -15,7 +12,7 @@ const (
 	blockTypeChecksum
 )
 
-type Block struct {
+type block struct {
 	filePath  string
 	numBytes  uint16
 	buffer    []byte
@@ -28,9 +25,3 @@ type Block struct {
 // Archive header: stole ideas from the PNG file header here, but replaced
 // 'PNG' with 'FA1' to identify the fast-archive format (version 1).
 var fastArchiverHeader = []byte{0x89, 0x46, 0x41, 0x31, 0x0D, 0x0A, 0x1A, 0x0A}
-
-var BlockSize uint16
-var Logger *log.Logger
-var Verbose bool
-var IgnorePerms bool
-var IgnoreOwners bool

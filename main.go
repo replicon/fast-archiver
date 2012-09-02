@@ -1,15 +1,14 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"github.com/replicon/fast-archiver/falib"
 	"log"
 	"math"
 	"os"
-	"runtime"
 	"path/filepath"
+	"runtime"
 )
 
 var logger *log.Logger
@@ -20,6 +19,7 @@ type MultiLevelLogger struct {
 	logger  *log.Logger
 	verbose bool
 }
+
 func (l *MultiLevelLogger) Verbose(v ...interface{}) {
 	if l.verbose {
 		l.logger.Println(v...)
@@ -49,20 +49,16 @@ func main() {
 	multiCpu := flag.Int("multicpu", 1, "maximum number of CPUs that can be executing simultaneously")
 	exclude := flag.String("exclude", "", "file patterns to exclude (eg. core.*); can be path list separated (eg. : in Linux) for multiple excludes (-c only)")
 	verbose := flag.Bool("v", false, "verbose output on stderr")
-	flag.BoolVar(&falib.IgnorePerms, "ignore-perms", false, "ignore permissions when restoring files (-x only)")
-	flag.BoolVar(&falib.IgnoreOwners, "ignore-owners", false, "ignore owners when restoring files (-x only)")
+	ignorePerms := flag.Bool("ignore-perms", false, "ignore permissions when restoring files (-x only)")
+	ignoreOwners := flag.Bool("ignore-owners", false, "ignore owners when restoring files (-x only)")
 	flag.Parse()
 
 	runtime.GOMAXPROCS(*multiCpu)
-
 	logger := log.New(os.Stderr, "", 0)
-	falib.Verbose = *verbose
-	falib.Logger = logger
 
 	if *requestedBlockSize > math.MaxUint16 {
 		logger.Fatalln("block-size must be less than or equal to", math.MaxUint16)
 	}
-	falib.BlockSize = uint16(*requestedBlockSize)
 
 	if *extract {
 		var inputFile *os.File
@@ -76,8 +72,14 @@ func main() {
 			inputFile = os.Stdin
 		}
 
-		bufferedInputFile := bufio.NewReader(inputFile)
-		falib.ArchiveReader(bufferedInputFile)
+		unarchiver := falib.NewUnarchiver(inputFile)
+		unarchiver.Logger = &MultiLevelLogger{logger, *verbose}
+		unarchiver.IgnorePerms = *ignorePerms
+		unarchiver.IgnoreOwners = *ignoreOwners
+		err := unarchiver.Run()
+		if err != nil {
+			logger.Fatalln("Fatal error in archiver:", err.Error())
+		}
 		inputFile.Close()
 
 	} else if *create {
@@ -96,7 +98,8 @@ func main() {
 			outputFile = os.Stdout
 		}
 
-		var archiver = falib.NewArchiver(outputFile)
+		archiver := falib.NewArchiver(outputFile)
+		archiver.BlockSize = uint16(*requestedBlockSize)
 		archiver.DirScanQueueSize = *directoryScanQueueSize
 		archiver.FileReadQueueSize = *fileReadQueueSize
 		archiver.BlockQueueSize = *blockQueueSize
