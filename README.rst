@@ -84,18 +84,18 @@ references.
 
 Here's a quick set of steps to setup the build:
 
-    1. Create a containing folder, eg. ``~/go-projects``
+1. Create a containing folder, eg. ``~/go-projects``
 
-    2. ``mkdir -p ~/go-projects/src/github.com/replicon/``
+2. ``mkdir -p ~/go-projects/src/github.com/replicon/``
 
-    3. ``cd ~/go-projects/src/github.com/replicon/``
+3. ``cd ~/go-projects/src/github.com/replicon/``
 
-    4. ``git clone https://github.com/replicon/fast-archiver.git``
+4. ``git clone https://github.com/replicon/fast-archiver.git``
 
-    5. ``cd fast-archiver``
+5. ``cd fast-archiver``
 
-    6. ``GOPATH=~/go-projects ./build.sh``  (or use ``go build``, but you
-        won't get version information in the built executable).
+6. ``GOPATH=~/go-projects ./build.sh``  (or use ``go build``, but you won't
+   get version information in the built executable).
 
 .. _Go: http://golang.org/
 
