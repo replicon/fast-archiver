@@ -74,9 +74,28 @@ through ssh::
 Build
 -----
 
-fast-archiver is written in `Go`_, for Go version 1.  fast-archiver uses the Go
-build system, but with a little shell script around it to enter the current git
-repo version numbers.  To build, run the ``build.sh`` script.
+fast-archiver is written in `Go`_, for Go version 1.
+
+The fast-archiver repository contains both a command-line tool (at the root)
+and a package called ``falib`` which contains the archive reading and writing
+code.  To make the build work correctly with both the library and the
+command-line tool, it's necessary to setup the correct GOPATH and directory
+references.
+
+Here's a quick set of steps to setup the build:
+
+    1. Create a containing folder, eg. ``~/go-projects``
+
+    2. ``mkdir -p ~/go-projects/src/github.com/replicon/``
+
+    3. ``cd ~/go-projects/src/github.com/replicon/``
+
+    4. ``git clone https://github.com/replicon/fast-archiver.git``
+
+    5. ``cd fast-archiver``
+
+    6. ``GOPATH=~/go-projects ./build.sh``  (or use ``go build``, but you
+        won't get version information in the built executable).
 
 .. _Go: http://golang.org/
 
