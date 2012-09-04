@@ -28,9 +28,10 @@ func (r hashingReader) Read(buf []byte) (int, error) {
 
 type Unarchiver struct {
 	Logger       Logger
-	file         io.Reader
 	IgnorePerms  bool
 	IgnoreOwners bool
+
+	file io.Reader
 }
 
 func NewUnarchiver(file io.Reader) *Unarchiver {

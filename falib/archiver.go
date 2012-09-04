@@ -13,20 +13,21 @@ import (
 )
 
 type Archiver struct {
+	DirReaderCount    int
+	FileReaderCount   int
+	DirScanQueueSize  int
+	FileReadQueueSize int
+	BlockQueueSize    int
+	ExcludePatterns   []string
+	Logger            Logger
+	BlockSize         uint16
+
 	directoryScanQueue chan string
 	fileReadQueue      chan string
 	blockQueue         chan block
 	workInProgress     sync.WaitGroup
 	excludePatterns    []string
 	output             *bufio.Writer
-	DirReaderCount     int
-	FileReaderCount    int
-	DirScanQueueSize   int
-	FileReadQueueSize  int
-	BlockQueueSize     int
-	ExcludePatterns    []string
-	Logger             Logger
-	BlockSize          uint16
 	error              error
 }
 

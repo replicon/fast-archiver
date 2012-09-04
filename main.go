@@ -11,7 +11,6 @@ import (
 	"runtime"
 )
 
-var logger *log.Logger
 var tag string
 var rev string
 
