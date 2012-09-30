@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/replicon/fast-archiver/falib"
+	"io"
 	"log"
 	"math"
 	"os"
@@ -28,6 +29,12 @@ func (l *MultiLevelLogger) Warning(v ...interface{}) {
 	l.logger.Println(v...)
 }
 
+type sink bool
+
+func (s sink) Write(p []byte) (n int, err error) {
+	return len(p), nil
+}
+
 func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "%s (tag: %s, rev: %s)\n", os.Args[0], tag, rev)
@@ -48,6 +55,7 @@ func main() {
 	multiCpu := flag.Int("multicpu", 1, "maximum number of CPUs that can be executing simultaneously")
 	exclude := flag.String("exclude", "", "file patterns to exclude (eg. core.*); can be path list separated (eg. : in Linux) for multiple excludes (-c only)")
 	verbose := flag.Bool("v", false, "verbose output on stderr")
+	dryRun := flag.Bool("n", false, "dry run; show what would be done, but do not write anything")
 	ignorePerms := flag.Bool("ignore-perms", false, "ignore permissions when restoring files (-x only)")
 	ignoreOwners := flag.Bool("ignore-owners", false, "ignore owners when restoring files (-x only)")
 	flag.Parse()
@@ -57,6 +65,10 @@ func main() {
 
 	if *requestedBlockSize > math.MaxUint16 {
 		logger.Fatalln("block-size must be less than or equal to", math.MaxUint16)
+	}
+
+	if *dryRun {
+		*verbose = true
 	}
 
 	if *extract && !*create {
@@ -75,6 +87,7 @@ func main() {
 		unarchiver.Logger = &MultiLevelLogger{logger, *verbose}
 		unarchiver.IgnorePerms = *ignorePerms
 		unarchiver.IgnoreOwners = *ignoreOwners
+		unarchiver.DryRun = *dryRun
 		err := unarchiver.Run()
 		if err != nil {
 			logger.Fatalln("Fatal error in archiver:", err.Error())
@@ -87,17 +100,21 @@ func main() {
 		}
 
 		var outputFile *os.File
-		if *outputFileName != "" {
-			file, err := os.Create(*outputFileName)
+		var outputWriter io.Writer
+		if *dryRun {
+			outputWriter = sink(true)
+		} else if *outputFileName != "" {
+			outputFile, err := os.Create(*outputFileName)
 			if err != nil {
 				logger.Fatalln("Error creating output file:", err.Error())
 			}
-			outputFile = file
+			outputWriter = outputFile
 		} else {
 			outputFile = os.Stdout
+			outputWriter = os.Stdout
 		}
 
-		archiver := falib.NewArchiver(outputFile)
+		archiver := falib.NewArchiver(outputWriter)
 		archiver.BlockSize = uint16(*requestedBlockSize)
 		archiver.DirScanQueueSize = *directoryScanQueueSize
 		archiver.FileReadQueueSize = *fileReadQueueSize
@@ -113,7 +130,9 @@ func main() {
 		if err != nil {
 			logger.Fatalln("Fatal error in archiver:", err.Error())
 		}
-		outputFile.Close()
+		if !*dryRun {
+			outputFile.Close()
+		}
 	} else {
 		logger.Fatalln("exactly one of extract (-x) or create (-c) flag must be provided")
 	}
