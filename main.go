@@ -59,7 +59,7 @@ func main() {
 		logger.Fatalln("block-size must be less than or equal to", math.MaxUint16)
 	}
 
-	if *extract {
+	if *extract && !*create {
 		var inputFile *os.File
 		if *inputFileName != "" {
 			file, err := os.Open(*inputFileName)
@@ -81,7 +81,7 @@ func main() {
 		}
 		inputFile.Close()
 
-	} else if *create {
+	} else if *create && !*extract {
 		if flag.NArg() == 0 {
 			logger.Fatalln("Directories to archive must be specified")
 		}
@@ -115,6 +115,6 @@ func main() {
 		}
 		outputFile.Close()
 	} else {
-		logger.Fatalln("extract (-x) or create (-c) flag must be provided")
+		logger.Fatalln("exactly one of extract (-x) or create (-c) flag must be provided")
 	}
 }
