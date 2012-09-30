@@ -30,6 +30,7 @@ type Unarchiver struct {
 	Logger       Logger
 	IgnorePerms  bool
 	IgnoreOwners bool
+	DryRun       bool
 
 	file io.Reader
 }
@@ -145,6 +146,11 @@ func (u *Unarchiver) Run() error {
 			if u.IgnorePerms {
 				mode = os.ModeDir | 0755
 			}
+
+			if u.DryRun {
+				continue
+			}
+
 			err = os.Mkdir(filePath, mode)
 			if err != nil && !os.IsExist(err) {
 				return err
@@ -180,6 +186,10 @@ func (u *Unarchiver) writeFile(blockSource chan block, workInProgress *sync.Wait
 	for block := range blockSource {
 		if block.blockType == blockTypeStartOfFile {
 			u.Logger.Verbose(block.filePath)
+
+			if u.DryRun {
+				continue
+			}
 
 			tmp, err := os.Create(block.filePath)
 			if err != nil {
