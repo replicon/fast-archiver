@@ -37,7 +37,11 @@ func (s sink) Write(p []byte) (n int, err error) {
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "%s (tag: %s, rev: %s)\n", os.Args[0], tag, rev)
+		if tag != "" || rev != "" {
+			fmt.Fprintf(os.Stderr, "%s (tag: %s, rev: %s)\n", os.Args[0], tag, rev)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s\n", os.Args[0])
+		}
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
 		flag.PrintDefaults()
 	}

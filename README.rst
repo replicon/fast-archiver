@@ -2,7 +2,7 @@ fast-archiver
 ~~~~~~~~~~~~~
 
 fast-archiver is a command-line tool for archiving directories, and restoring
-those archives.
+those archives written in [Go](http://golang.org).
 
 fast-archiver uses a few techniques to try to be more efficient than
 traditional tools:
@@ -71,10 +71,8 @@ through ssh::
     ssh postgres@10.32.32.32 "cd /db; fast-archive -c data --exclude=data/\*.pid" | fast-archiver -x
 
 
-Build
------
-
-fast-archiver is written in `Go`_, for Go version 1.
+Installation
+------------
 
 The fast-archiver repository contains both a command-line tool (at the root)
 and a package called ``falib`` which contains the archive reading and writing
@@ -84,20 +82,16 @@ references.
 
 Here's a quick set of steps to setup the build:
 
-1. Create a containing folder, eg. ``~/go-projects``
+ * Install [Go](http://golang.org).
 
-2. ``mkdir -p ~/go-projects/src/github.com/replicon/``
+ * Setup ``$GOPATH``, for example: ``export GOPATH=$HOME/go-projects``. Probably
+   better to set it up in your ``.bash_aliases``.
 
-3. ``cd ~/go-projects/src/github.com/replicon/``
+ * ``go get -u github.com/replicon/fast-archiver``
 
-4. ``git clone https://github.com/replicon/fast-archiver.git``
+_or_
 
-5. ``cd fast-archiver``
-
-6. ``GOPATH=~/go-projects ./build.sh``  (or use ``go build``, but you won't
-   get version information in the built executable).
-
-.. _Go: http://golang.org/
+ * ``go get -d github.com/replicon/fast-archiver && $GOPATH/src/github.com/replicon/fast-archiver/build.sh``
 
 
 Command-line arguments
