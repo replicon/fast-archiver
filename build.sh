@@ -1,5 +1,7 @@
 #!/bin/bash
 
+cd `dirname $0`
+
 TAG=`git describe 2> /dev/null`
 REV=`git rev-parse --short HEAD 2> /dev/null`
 
@@ -12,5 +14,4 @@ then
     REV="-"
 fi
 
-go build -ldflags "-X main.tag $TAG -X main.rev $REV"
-
+go install -ldflags "-X main.tag $TAG -X main.rev $REV"
